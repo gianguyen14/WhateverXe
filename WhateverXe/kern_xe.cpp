@@ -11124,7 +11124,7 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			// host-scheduler target. Preserve native GTT mode, stamp address/value,
 			// notification selection, packet lengths and the preceding CS stall.
 			const bool tahoeTrialScope=!adlnDetected && checkKernelArgument("-disablegfxfirmware") &&
-				(XELP::kernelOS(version)==XELP::OS::Tahoe);
+				((XELP::kernelOS(version)==XELP::OS::Tahoe) || (XELP::kernelOS(version)==XELP::OS::Sequoia));
 			const bool completionCacheRequested=tahoeTrialScope && !(tglTahoeDisabledTrials&1);
 			const bool contextCacheRequested=tahoeTrialScope && !(tglTahoeDisabledTrials&2);
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLTahoeDisabledTrials",tglTahoeDisabledTrials,32);
@@ -11352,7 +11352,7 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLHangBatchCaptureReady",hangOK);
             // Exact failure-only wake call. Native STOP, wake ownership and all
             // other callers remain unchanged; no instrumentation in normal submits.
-            if((XELP::kernelOS(version)==XELP::OS::Tahoe)) {
+            if((XELP::kernelOS(version)==XELP::OS::Tahoe) || (XELP::kernelOS(version)==XELP::OS::Sequoia)) {
              const uint8_t before[] {0x41,0x89,0xf6,0x49,0x89,0xff,0x48,0x8b,0x7f,0x10,0xbe,1,0,0,0,0xba,7,0,0,0,0xe8,0x8e,0x22,0xfd,0xff};
              const uint8_t stop[] {0x42,0xc7,0x04,0x20,1,0,1,0};
              bool ok=hangOK && size>0x569c6 &&
@@ -11382,6 +11382,7 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			// recovery caller changes; native reset/replay still owns completion.
 			const bool recoveryRequested=checkKernelArgument("-disablegfxfirmware") &&
 				((XELP::kernelOS(version)==XELP::OS::BigSur) ||
+				 (XELP::kernelOS(version)==XELP::OS::Sequoia) ||
 				 (XELP::kernelOS(version)==XELP::OS::Tahoe));
 			bool recoveryOK=!recoveryRequested;
 			if (recoveryRequested) {
@@ -14581,7 +14582,7 @@ void tglCaptureCSBFailure() {
 
 namespace {
 bool tglHangDetailKernel() {
- return (XELP::kernelOS(version)==XELP::OS::Tahoe);
+ return (XELP::kernelOS(version)==XELP::OS::Tahoe || XELP::kernelOS(version)==XELP::OS::Sequoia);
 }
 void tglCaptureHangDetail(const TGLHangPending::Capture &pending,const uint8_t *regs,const TGLHangSelect::Selection &selection) {
  // Keep this experiment on the admitted Tahoe kernel family. No additional

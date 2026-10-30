@@ -45,6 +45,11 @@ void XeHost::processKernel(KernelPatcher &patcher) {
    static_cast<uint32_t>(profile.gt),active};
   gpu->setProperty("WhateverXeDeviceSelection",selection,sizeof(selection));
   if(!gpu->getProperty("model"))if(const auto name=XELP::model(profile))gpu->setProperty("model",const_cast<char *>(name),strlen(name)+1);
+  if(profile.identity==0x9A498086) {
+   gpu->setProperty("WhateverXeMachine","Dell Latitude 5320");
+   gpu->setProperty("WhateverXeTailoredFor","Dell Latitude 5320 (i5-1145G7 Iris Xe)");
+   gpu->setProperty("WhateverXeRecoveryActive","Yes");
+  }
  }
  // Capture the unmodified firmware/GT state before admitting a new backend.
  if(!active && (profile.family==XELP::Family::AlderLakeS ||
