@@ -43,7 +43,7 @@ inline OS kernelOS(const char *version) {
     const char *tail=end-(sizeof(suffix)-1);
     for (unsigned i=0;i<sizeof(suffix);++i)
         if (tail[i]!=suffix[i]) return OS::Unknown;
-    if (numbers[0]==24 && numbers[1]==6) return OS::Sequoia;
+    if (numbers[0]==24 && numbers[1]>=6) return OS::Sequoia;
     if (numbers[0]==25 && numbers[1]>=6) return OS::Tahoe;
     return OS::Unknown;
 }
