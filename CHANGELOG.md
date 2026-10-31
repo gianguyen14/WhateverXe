@@ -5,6 +5,7 @@
 ### Changed
 
 - Keep diagnostic records off the I/O Registry root. Clients that copy the root's properties, such as PerfPowerServices, serialized about 1100 records and several MB from live serializers on every call, holding a CPU core busy. Boot with `-wexdiag` to publish them on the root again.
+- Report GPU utilization with `-disablegfxfirmware` on Tiger Lake. The native statistics page is filled by graphics firmware, so Activity Monitor and `PerformanceStatistics` always showed 0%; the host CSB consumer now accounts per-engine busy time there.
 
 ## 0.6.1-sequoia.1
 
