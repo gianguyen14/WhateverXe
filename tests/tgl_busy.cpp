@@ -77,6 +77,12 @@ int main() {
 	assert(ticksToNs(192, 192) == 10000 && ticksToNs(1, 0) == 0);
 	assert(nsToTicks(10000, 192) == 192);
 
+	// Slot growth between reads never exceeds the elapsed time.
+	assert(clampGrowth(1500, 1000, 1000) == 1500);
+	assert(clampGrowth(5000, 1000, 1000) == 2000);
+	assert(clampGrowth(1000, 1000, 1000) == 1000);
+	assert(clampGrowth(900, 1000, 1000) == 900);
+
 	puts("tgl_busy ok");
 	return 0;
 }

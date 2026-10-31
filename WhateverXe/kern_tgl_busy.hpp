@@ -77,6 +77,14 @@ inline uint64_t nsToTicks(uint64_t ns, uint64_t denominator) {
 	return denominator * ns / 10000;
 }
 
+// Two sources feed one slot (live samples, switch-out remainders, and Render
+// and Compute share slot 0), so a slot can gain more than the wall time between
+// reads. Bound each slot's growth since the previous read to the elapsed time.
+inline uint64_t clampGrowth(uint64_t current, uint64_t previous, uint64_t elapsed) {
+	if (current < previous) return current;
+	return current - previous > elapsed ? previous + elapsed : current;
+}
+
 // "Device Utilization %" is busy time scaled by current/maximum frequency. The
 // donor derives both from Gen11 registers that do not hold them on Tiger Lake
 // (the scaled value exceeded 100). Use GEN12_RPSTAT1 CAGF (16.67 MHz units) and

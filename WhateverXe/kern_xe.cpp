@@ -14163,6 +14163,7 @@ TGLGateTryClose tglBusyTryClose {};
 TGLGateOpen tglBusyOpenGate {};
 uint64_t *tglTimestampDenominator {};
 uint64_t tglBusyLastSample[TGLBusy::Engines] {};
+uint64_t tglBusySlotLast[TGLBusy::Slots] {}, tglBusySlotTime {};
 
 struct TGLCSBIO {
  uint8_t *streamer, *owner;
@@ -14407,7 +14408,24 @@ void XE::wrapTGLBusyTracker(void *tracker,void *context) {
  TGLBusy::account(static_cast<uint8_t *>(tracker),static_cast<uint8_t *>(context));
 }
 void XE::wrapTGLStatsWrite(void *stats,void *dict,bool full) {
- if (full && stats) tglBusySampleLive(*reinterpret_cast<uint8_t **>(static_cast<uint8_t *>(stats)+0x10));
+ if (full && stats) {
+  auto owner=*reinterpret_cast<uint8_t **>(static_cast<uint8_t *>(stats)+0x10);
+  tglBusySampleLive(owner);
+  const uint64_t now=mach_absolute_time(),elapsed=tglBusySlotTime && now>tglBusySlotTime ? now-tglBusySlotTime : 0;
+  for (unsigned slot=0,engine=0;slot<TGLBusy::Slots;++slot) {
+   while (engine<TGLBusy::Engines && TGLBusy::SlotOfEngine[engine]!=slot) ++engine;
+   auto busy=TGLBusy::accumulator(owner,engine);
+   if (!busy) continue;
+   uint64_t value=__atomic_load_n(busy,__ATOMIC_RELAXED);
+   if (tglBusySlotTime) {
+    const uint64_t bounded=TGLBusy::clampGrowth(value,tglBusySlotLast[slot],elapsed);
+    if (bounded!=value) __atomic_store_n(busy,bounded,__ATOMIC_RELAXED);
+    value=bounded;
+   }
+   tglBusySlotLast[slot]=value;
+  }
+  tglBusySlotTime=now;
+ }
  FunctionCast(wrapTGLStatsWrite,callbackXE->orgTGLStatsWrite)(stats,dict,full);
  // Replace the donor's frequency scaling; its inputs are Gen11 registers.
  auto owner=stats ? *reinterpret_cast<uint8_t **>(static_cast<uint8_t *>(stats)+0x10) : nullptr;
