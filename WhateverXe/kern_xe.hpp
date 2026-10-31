@@ -711,12 +711,13 @@ private:
 	static void wrapTGLHostCSB(void *streamer, uint32_t *entry, uint32_t *index);
 	bool installTGLCSB12(KernelPatcher &patcher, size_t index, mach_vm_address_t address, size_t size);
 	mach_vm_address_t orgTGLCSBInit {}, orgTGLCSBReset {}, orgTGLCSBWake {}, orgTGLCSBProcess {};
-	mach_vm_address_t orgTGLStatsWrite {};
+	mach_vm_address_t orgTGLStatsWrite {}, orgTGLBusyTracker {};
 	static bool wrapTGLCSBInit(void *streamer, void *owner, void *loop, void *scheduler, unsigned engine);
 	static void wrapTGLCSBReset(void *streamer);
 	static void wrapTGLCSBWake(void *streamer);
 	static void wrapTGLCSBProcess(void *streamer, uint32_t flags);
 	static void wrapTGLStatsWrite(void *stats, void *dict, bool full);
+	static void wrapTGLBusyTracker(void *tracker, void *context);
 	static void wrapTGLHostCSBPanic(const uint32_t *entry);
 	mach_vm_address_t orgAlderLakeNExecutionWake {};
 	static void wrapAlderLakeNExecutionWake(void *owner, bool enable, unsigned domains, unsigned client);

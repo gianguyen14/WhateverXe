@@ -14157,7 +14157,6 @@ struct TGLCSBEngine {
 // Exact donor kIGHwCsDesc has six 0x79-byte records, IDs0..5. The scheduler's
 // `index > 4` exit is AFTER construction, so it also constructs ID5.
 } tglCSBEngines[6];
-TGLBusy::Clock tglBusyClock;
 
 struct TGLCSBIO {
  uint8_t *streamer, *owner;
@@ -14211,7 +14210,7 @@ void tglCSBInitialize(void *streamer,uint32_t flags=0) {
  TGLCSBIO io(streamer,flags);auto &engine=tglCSBEngines[io.engine];
  // Called before the first submission, wake reset, or GPU-reset replay. Never
  // at reset's return: that method can submit GPU work before it returns.
- engine.streamer=streamer;TGLCSB::initialize(engine.state,io);tglBusyClock.drop(io.engine);
+ engine.streamer=streamer;TGLCSB::initialize(engine.state,io);
  engine.modeAtInit=*reinterpret_cast<volatile uint32_t *>(io.bar+io.modeReg);
  *reinterpret_cast<uint32_t *>(io.streamer+0x1C04)=engine.state.head;
  engine.hardwareReady=true;++engine.resets;
@@ -14314,16 +14313,23 @@ bool XE::installTGLCSB12(KernelPatcher &patcher,size_t index,mach_vm_address_t a
  if (ok) ok=patcher.routeMultiple(index,routes,arrsize(routes),address,size);
  auto root=wexDiagRoot();root->setProperty("TGLCSB12Routed",ok);
  if (ok) {
-  // Optional: fold running busy intervals into the native statistics page
-  // before each read. Failure leaves utilization at zero, as before.
+  // Optional: feed per-context run time into the native statistics page and
+  // correct its frequency scaling. Failure leaves utilization at zero, as before.
+  const char *tracker="__ZN18IGHwCsStatsTracker32updateWithContextUtilizationDataEP17IGHardwareContext";
   const char *stats="__ZN17IGAccelStatistics21writePerformanceStatsEP12OSDictionaryb";
   const uint8_t prologue[] {0x55,0x48,0x89,0xE5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53};
-  bool statsOK=patcher.solveSymbol<mach_vm_address_t>(index,stats,address,size)==address+0x1674C &&
+  bool statsOK=size>0x16760 &&
+   patcher.solveSymbol<mach_vm_address_t>(index,tracker,address,size)==address+0xA3A4 &&
+   patcher.solveSymbol<mach_vm_address_t>(index,stats,address,size)==address+0x1674C &&
+   !memcmp(reinterpret_cast<void *>(address+0xA3A4),prologue,sizeof(prologue)) &&
    !memcmp(reinterpret_cast<void *>(address+0x1674C),prologue,sizeof(prologue));
   patcher.clearError();
   if (statsOK) {
-   KernelPatcher::RouteRequest route {stats,wrapTGLStatsWrite,orgTGLStatsWrite};
-   statsOK=patcher.routeMultiple(index,&route,1,address,size);patcher.clearError();
+   KernelPatcher::RouteRequest busy[] {
+    {tracker,wrapTGLBusyTracker,orgTGLBusyTracker},
+    {stats,wrapTGLStatsWrite,orgTGLStatsWrite}
+   };
+   statsOK=patcher.routeMultiple(index,busy,arrsize(busy),address,size);patcher.clearError();
   }
   root->setProperty("TGLBusyStatsRouted",statsOK);
  }
@@ -14352,13 +14358,21 @@ bool XE::wrapTGLCSBInit(void *streamer,void *owner,void *loop,void *scheduler,un
  return ok;
 }
 void XE::wrapTGLCSBWake(void *streamer) { tglCSBInitialize(streamer); }
+void XE::wrapTGLBusyTracker(void *tracker,void *context) {
+ FunctionCast(wrapTGLBusyTracker,callbackXE->orgTGLBusyTracker)(tracker,context);
+ TGLBusy::account(static_cast<uint8_t *>(tracker),static_cast<uint8_t *>(context));
+}
 void XE::wrapTGLStatsWrite(void *stats,void *dict,bool full) {
- if (auto owner=stats ? *reinterpret_cast<uint8_t **>(static_cast<uint8_t *>(stats)+0x10) : nullptr) {
-  uint64_t *busy[TGLBusy::Engines];
-  for (unsigned e=0;e<TGLBusy::Engines;++e) busy[e]=TGLBusy::accumulator(owner,e);
-  tglBusyClock.fold(mach_absolute_time(),busy);
- }
  FunctionCast(wrapTGLStatsWrite,callbackXE->orgTGLStatsWrite)(stats,dict,full);
+ // Replace the donor's frequency scaling; its inputs are Gen11 registers.
+ auto owner=stats ? *reinterpret_cast<uint8_t **>(static_cast<uint8_t *>(stats)+0x10) : nullptr;
+ auto bar=owner ? *reinterpret_cast<volatile uint8_t **>(owner+0x1240) : nullptr;
+ auto out=OSDynamicCast(OSDictionary,static_cast<OSObject *>(dict));
+ auto busy=out ? OSDynamicCast(OSNumber,out->getObject("Device Utilization % at cur p-state")) : nullptr;
+ if (!full || !bar || !busy) return;
+ const auto value=TGLBusy::scaledUtilization(busy->unsigned32BitValue(),
+  *reinterpret_cast<volatile uint32_t *>(bar+0x1381B4),*reinterpret_cast<volatile uint32_t *>(bar+0x145998));
+ if (auto number=OSNumber::withNumber(value,32)) {out->setObject("Device Utilization %",number);number->release();}
 }
 void XE::wrapTGLCSBReset(void *streamer) {
  tglCSBInitialize(streamer);
@@ -14417,8 +14431,6 @@ void XE::wrapTGLCSBProcess(void *streamer,uint32_t flags) {
    }
   }
   tglCSBMethods[handler](streamer,&entry);
-  if (handler==0) tglBusyClock.active(io.engine,mach_absolute_time());
-  else if (handler==3) tglBusyClock.idle(io.engine,mach_absolute_time(),TGLBusy::accumulator(io.owner,io.engine));
   if (record) {
    // Existing fixed history: native return and resulting banks, no MMIO/wait.
    uint64_t banks[12];tglHostBanks(io.streamer,banks);

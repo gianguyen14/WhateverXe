@@ -9,61 +9,54 @@ using namespace TGLBusy;
 int main() {
 	// Layout matches the donor statistics page read by writePerformanceStats.
 	alignas(8) uint8_t page[0x1000] {};
-	alignas(8) uint8_t owner[0x1000] {};
+	alignas(8) uint8_t owner[0x2000] {};
 	uint8_t *p = page;
 	memcpy(owner + StatsPage, &p, sizeof(p));
 	assert(accumulator(owner, 0) == reinterpret_cast<uint64_t *>(page + 0x190));
 	assert(accumulator(owner, 2) == reinterpret_cast<uint64_t *>(page + 0x190 + 2 * 0x70));
 	assert(!accumulator(owner, Engines) && !accumulator(nullptr, 0));
+
+	alignas(8) uint8_t tracker[0x800] {};
+	alignas(8) uint8_t context[0x100] {};
+	uint8_t *o = owner;
+	memcpy(tracker + TrackerOwner, &o, sizeof(o));
+	auto lastRun = [&](unsigned e, uint64_t ns) { memcpy(tracker + TrackerLastRun + e * 8, &ns, 8); };
+	auto busy = [&](unsigned e) { uint64_t v; memcpy(&v, page + 0x190 + e * 0x70, 8); return v; };
+
+	// Each switch-out adds that context's run time to its engine.
+	context[ContextEngine] = 0;
+	lastRun(0, 1500);
+	assert(account(tracker, context) && busy(0) == 1500);
+	lastRun(0, 2500);
+	assert(account(tracker, context) && busy(0) == 4000);
+	context[ContextEngine] = 2;
+	lastRun(2, 700);
+	assert(account(tracker, context) && busy(2) == 700 && busy(0) == 4000);
+
+	// Zero, oversized and out-of-range samples are ignored.
+	lastRun(2, 0);
+	assert(!account(tracker, context));
+	lastRun(2, MaxRunNs + 1);
+	assert(!account(tracker, context) && busy(2) == 700);
+	context[ContextEngine] = Engines;
+	assert(!account(tracker, context));
+	assert(!account(nullptr, context) && !account(tracker, nullptr));
+
+	// Missing statistics page: nothing is written.
 	uint8_t *none = nullptr;
-	alignas(8) uint8_t empty[0x1000] {};
-	memcpy(empty + StatsPage, &none, sizeof(none));
-	assert(!accumulator(empty, 0));
+	memcpy(owner + StatsPage, &none, sizeof(none));
+	context[ContextEngine] = 0;
+	lastRun(0, 100);
+	assert(!account(tracker, context) && busy(0) == 4000);
 
-	Clock c;
-	uint64_t busy[Engines] {};
-	uint64_t *all[Engines];
-	for (unsigned e = 0; e < Engines; ++e) all[e] = &busy[e];
-
-	// A closed interval is accounted once.
-	c.active(0, 100);
-	c.active(0, 150); // already active: keeps the original start
-	c.idle(0, 400, &busy[0]);
-	assert(busy[0] == 300);
-	c.idle(0, 500, &busy[0]); // idle without an open interval adds nothing
-	assert(busy[0] == 300);
-
-	// A continuously busy engine is visible at every statistics read.
-	c.active(2, 1000);
-	c.fold(1600, all);
-	assert(busy[2] == 600);
-	c.fold(2000, all);
-	assert(busy[2] == 1000);
-	c.idle(2, 2500, &busy[2]);
-	assert(busy[2] == 1500);
-	c.fold(3000, all); // idle engines stay unchanged
-	assert(busy[2] == 1500 && busy[0] == 300);
-
-	// Reset drops the open interval; a later idle cannot account it.
-	c.active(4, 10);
-	c.drop(4);
-	c.idle(4, 90, &busy[4]);
-	assert(busy[4] == 0);
-
-	// Out-of-range engines and a zero timestamp are ignored.
-	c.active(Engines, 5);
-	c.idle(Engines, 9, &busy[0]);
-	c.drop(Engines);
-	c.active(1, 0);
-	c.fold(50, all);
-	assert(busy[1] == 0);
-
-	// Missing statistics page: intervals still close without a write.
-	c.active(5, 10);
-	uint64_t *missing[Engines] {};
-	c.fold(20, missing);
-	c.idle(5, 30, nullptr);
-	assert(busy[5] == 0 && c.since[5] == 0);
+	// Frequency scaling: 1100 of 1300 MHz, clamped to busy, unknown -> busy.
+	const uint32_t cagf1100 = 66u << 11, cap = 0x0002001A;
+	assert(scaledUtilization(56, cagf1100, cap) == 47);
+	assert(scaledUtilization(56, 78u << 11, cap) == 56);
+	assert(scaledUtilization(56, 90u << 11, cap) == 56);
+	assert(scaledUtilization(150, cagf1100, cap) == 84);
+	assert(scaledUtilization(40, 0, cap) == 40 && scaledUtilization(40, cagf1100, 0) == 40);
+	assert(scaledUtilization(0, cagf1100, cap) == 0);
 
 	puts("tgl_busy ok");
 	return 0;
