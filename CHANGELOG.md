@@ -5,7 +5,7 @@
 ### Changed
 
 - Keep diagnostic records off the I/O Registry root. Clients that copy the root's properties, such as PerfPowerServices, serialized about 1100 records and several MB from live serializers on every call, holding a CPU core busy. Boot with `-wexdiag` to publish them on the root again.
-- Report GPU utilization with `-disablegfxfirmware` on Tiger Lake. The native statistics page is filled by graphics firmware, so Activity Monitor and `PerformanceStatistics` always showed 0%; each context's measured GPU run time is now accounted there, and the frequency-scaled value uses Tiger Lake's RPSTAT1/RP_STATE_CAP so it no longer exceeds 100%.
+- Report GPU utilization with `-disablegfxfirmware` on Tiger Lake. The native statistics page is filled by graphics firmware, so Activity Monitor and `PerformanceStatistics` always showed 0%; each context's measured GPU run time is now accounted there (Render and Compute together, Blit, and media engines, the three units the native reader reports), and the frequency-scaled value uses Tiger Lake's RPSTAT1/RP_STATE_CAP so it no longer exceeds 100%.
 
 ## 0.6.1-sequoia.1
 

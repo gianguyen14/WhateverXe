@@ -19,6 +19,13 @@ namespace TGLBusy {
 
 constexpr unsigned Engines = 6;
 constexpr uint32_t StatsPage = 0xE00, BusyBase = 0x190, UnitStride = 0x70;
+// IGTelemetryManager::getStatisticsGlobalUsage reads unit i's busy time at
+// BusyBase + i * 2 * UnitStride, so only units 0, 2 and 4 are ever reported and
+// Compute (engine 1) never is. Feed the three slots it reads, all inside the
+// 0x430-byte page: Render+Compute, Blit, and the media engines.
+// kIGHwCsDesc engine IDs: 0 Render, 1 Compute, 2 Blit, 3 VCS0, 4 VCS2, 5 VECS0.
+constexpr unsigned Slots = 3;
+constexpr uint8_t SlotOfEngine[Engines] {0, 0, 1, 2, 2, 2};
 // IGHwCsStatsTracker: owning accelerator, last context run time (ns) per engine.
 constexpr uint32_t TrackerOwner = 0x10, TrackerLastRun = 0x658;
 // IGHardwareContext: engine index.
@@ -29,7 +36,7 @@ constexpr uint64_t MaxRunNs = 10ULL * 1000 * 1000 * 1000;
 inline uint64_t *accumulator(uint8_t *owner, unsigned engine) {
 	if (!owner || engine >= Engines) return nullptr;
 	auto page = *reinterpret_cast<uint8_t **>(owner + StatsPage);
-	return page ? reinterpret_cast<uint64_t *>(page + BusyBase + engine * UnitStride) : nullptr;
+	return page ? reinterpret_cast<uint64_t *>(page + BusyBase + SlotOfEngine[engine] * 2 * UnitStride) : nullptr;
 }
 
 // After the native tracker ran for `context`, account its last run time.

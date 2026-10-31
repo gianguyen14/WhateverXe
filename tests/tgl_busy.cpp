@@ -12,8 +12,13 @@ int main() {
 	alignas(8) uint8_t owner[0x2000] {};
 	uint8_t *p = page;
 	memcpy(owner + StatsPage, &p, sizeof(p));
+	// Slots sit where getStatisticsGlobalUsage reads units 0..2 (stride 0xE0).
 	assert(accumulator(owner, 0) == reinterpret_cast<uint64_t *>(page + 0x190));
-	assert(accumulator(owner, 2) == reinterpret_cast<uint64_t *>(page + 0x190 + 2 * 0x70));
+	assert(accumulator(owner, 1) == accumulator(owner, 0)); // Compute joins Render
+	assert(accumulator(owner, 2) == reinterpret_cast<uint64_t *>(page + 0x270));
+	for (unsigned e = 3; e < Engines; ++e)
+		assert(accumulator(owner, e) == reinterpret_cast<uint64_t *>(page + 0x350));
+	assert(0x350 + 8 <= 0x430); // inside the native allocation
 	assert(!accumulator(owner, Engines) && !accumulator(nullptr, 0));
 
 	alignas(8) uint8_t tracker[0x800] {};
@@ -21,7 +26,7 @@ int main() {
 	uint8_t *o = owner;
 	memcpy(tracker + TrackerOwner, &o, sizeof(o));
 	auto lastRun = [&](unsigned e, uint64_t ns) { memcpy(tracker + TrackerLastRun + e * 8, &ns, 8); };
-	auto busy = [&](unsigned e) { uint64_t v; memcpy(&v, page + 0x190 + e * 0x70, 8); return v; };
+	auto busy = [&](unsigned e) { uint64_t v; memcpy(&v, page + 0x190 + SlotOfEngine[e] * 0xE0, 8); return v; };
 
 	// Each switch-out adds that context's run time to its engine.
 	context[ContextEngine] = 0;
@@ -29,9 +34,12 @@ int main() {
 	assert(account(tracker, context) && busy(0) == 1500);
 	lastRun(0, 2500);
 	assert(account(tracker, context) && busy(0) == 4000);
+	context[ContextEngine] = 1; // Compute adds to the Render slot
+	lastRun(1, 1000);
+	assert(account(tracker, context) && busy(0) == 5000);
 	context[ContextEngine] = 2;
 	lastRun(2, 700);
-	assert(account(tracker, context) && busy(2) == 700 && busy(0) == 4000);
+	assert(account(tracker, context) && busy(2) == 700 && busy(0) == 5000);
 
 	// Zero, oversized and out-of-range samples are ignored.
 	lastRun(2, 0);
@@ -47,7 +55,7 @@ int main() {
 	memcpy(owner + StatsPage, &none, sizeof(none));
 	context[ContextEngine] = 0;
 	lastRun(0, 100);
-	assert(!account(tracker, context) && busy(0) == 4000);
+	assert(!account(tracker, context) && busy(0) == 5000);
 
 	// Frequency scaling: 1100 of 1300 MHz, clamped to busy, unknown -> busy.
 	const uint32_t cagf1100 = 66u << 11, cap = 0x0002001A;
