@@ -1,6 +1,7 @@
 #include "kern_display13_color.hpp"
 #include "kern_diag.hpp"
 #include "kern_tgl_busy.hpp"
+#include "kern_tgl_rps.hpp"
 #include <mach/clock.h>
 //
 //  kern_xe.cpp
@@ -529,6 +530,8 @@ bool tglEarlyReadSerialize(void *,void *,OSSerialize *serializer) {
 // non-GuC frequency query, preserving the native writer/timer/idle transitions.
 uintptr_t tglOriginalPMNotify {};
 uint64_t tglHostRPSCalls {}, tglHostRPSAnswered {};
+TGLRPS::Governor tglHostGovernor;
+bool tglHostGovernorEnabled {true};
 uint32_t tglHostRPSLast {}, tglHostRPSCap {};
 static uint32_t tglHostRPSEncode(uint32_t requested,uint32_t boost,uint32_t caps) {
  const uint32_t lo=(caps>>16)&255,hi=caps&255;
@@ -546,8 +549,15 @@ uint32_t tglHostPMNotify(void *controller,uint32_t priority,uint32_t event,uint6
    auto base=*reinterpret_cast<volatile uint8_t **>(access+0x50);
    if(base) {
     const uint32_t caps=*reinterpret_cast<volatile uint32_t *>(base+0x145998);
-    const uint32_t encoded=tglHostRPSEncode(*reinterpret_cast<uint32_t *>(c+0xec8),
-      *reinterpret_cast<uint32_t *>(c+0xecc),caps);
+    uint32_t requested=*reinterpret_cast<uint32_t *>(c+0xec8),boost=*reinterpret_cast<uint32_t *>(c+0xecc);
+    if (tglHostGovernorEnabled) {
+     // The donor inputs stay at RP0; follow GT activity (RC6 residency) instead.
+     uint64_t t,ns;clock_get_uptime(&t);absolutetime_to_nanoseconds(t,&ns);
+     const uint32_t target=tglHostGovernor.step(ns,*reinterpret_cast<volatile uint32_t *>(base+0x138108),TGLRPS::decodeCaps(caps));
+     const uint32_t donor=requested>boost ? requested:boost;
+     requested=donor<target ? donor:target;boost=0;
+    }
+    const uint32_t encoded=tglHostRPSEncode(requested,boost,caps);
     if(encoded) {
      *frequency=encoded;
      __atomic_store_n(&tglHostRPSCap,caps,__ATOMIC_RELAXED);
@@ -4215,6 +4225,8 @@ void XE::xelpLoadDisplayPool(IOService *provider) {
 }
 
 bool XE::xelpInstallHostRPS(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
+    // -wexrpsmax keeps the donor's fixed RP0 request (no activity-based scaling).
+    tglHostGovernorEnabled=!checkKernelArgument("-wexrpsmax");
     const char *symbol="__ZN31AppleIntelFramebufferController8pmNotifyEjjPyPj";
     const uint8_t stub[] {0x55,0x48,0x89,0xE5,0x48,0xFF,0x05,0x99,0x1B,0x0C,0,0xB8,0xC7,0x02,0,0xE0,0x5D,0xC3};
     bool ready=size>0x12BC6 && patcher.solveSymbol<mach_vm_address_t>(index,symbol,address,size)==address+0x12BB4 &&
