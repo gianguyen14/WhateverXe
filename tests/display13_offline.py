@@ -11,6 +11,7 @@ code=r'''
 #include <cstdio>
 #include <cstring>
 struct OSObject { unsigned char bytes[0x580]{}; OSObject *getMetaClass(){return this;}unsigned getClassSize(){return sizeof(bytes);} };
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {static IORegistryEntry *getRegistryRoot(){static IORegistryEntry r;return &r;}void setProperty(const char *,bool){}void setProperty(const char *,const void *,unsigned){}};
 namespace Display13FBMemory {template<class T>T field(void *p,unsigned off){T v;memcpy(&v,(char*)p+off,sizeof(v));return v;}}
 struct Wiring {unsigned selected(){return 8;}};

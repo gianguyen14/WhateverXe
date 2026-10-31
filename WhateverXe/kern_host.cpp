@@ -1,5 +1,6 @@
 // Copyright © 2018 vit9696. Derived from WhateverGreen (BSD-3-Clause).
 #include "kern_host.hpp"
+#include "kern_diag.hpp"
 #include "kern_xelp_device.hpp"
 #include "kern_xe_data_access.hpp"
 #include "kern_backlight_profile.hpp"
@@ -78,7 +79,7 @@ void XeHost::processKext(KernelPatcher &patcher,size_t index,mach_vm_address_t a
   if(backlightEnabled) {
    KernelPatcher::RouteRequest route("__ZN15AppleIntelPanel10setDisplayEP9IODisplay",wrapPanelSetDisplay,orgPanelSetDisplay);
    const bool ready=patcher.routeMultiple(index,&route,1,address,size);
-   IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeBacklightProfileReady",ready);
+   wexDiagRoot()->setProperty("WhateverXeBacklightProfileReady",ready);
    patcher.clearError();
   }
   return;

@@ -30,6 +30,7 @@ struct Meta {unsigned size=0x4b90;unsigned getClassSize(){return size;}};
 struct IOService {alignas(16) uint8_t bytes[0x4b90]{};Meta meta;Meta *getMetaClass(){return &meta;}};
 namespace Display13FBMemory {template<class T> T field(void *p,unsigned n){T v;memcpy(&v,(uint8_t*)p+n,sizeof(v));return v;}}
 template<class T> void put(void *p,unsigned n,T v){memcpy((uint8_t*)p+n,&v,sizeof(v));}
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {
  void setProperty(const char *,bool){} void setProperty(const char *,void *,size_t){}
  static IORegistryEntry *getRegistryRoot(){static IORegistryEntry r;return &r;}

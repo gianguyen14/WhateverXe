@@ -37,6 +37,7 @@ using mach_vm_address_t=uintptr_t;
 
 unsigned calls=0,published=0;uint64_t record[5];
 struct Root {void setProperty(const char *,void *p,size_t n){assert(n==40);memcpy(record,p,n);++published;}} root;
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {static Root *getRegistryRoot(){return &root;}};
 void *tglAUXLock=&root;
 void IOSimpleLockLock(void *){} void IOSimpleLockUnlock(void *){}

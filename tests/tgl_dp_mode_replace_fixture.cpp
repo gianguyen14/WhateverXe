@@ -4,6 +4,7 @@
 #include <cstring>
 #include <map>
 #define FunctionCast(f,p) reinterpret_cast<decltype(&f)>(p)
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry{static IORegistryEntry*getRegistryRoot(){static IORegistryEntry r;return &r;}template<class...T>void setProperty(T...){}};
 template<class...T>void tglTransitionRecord(T...){}
 bool tglQuietTraining(){return true;}

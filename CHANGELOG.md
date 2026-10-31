@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Keep diagnostic records off the I/O Registry root. Clients that copy the root's properties, such as PerfPowerServices, serialized about 1100 records and several MB from live serializers on every call, holding a CPU core busy. Boot with `-wexdiag` to publish them on the root again.
+
 ## 0.6.1-sequoia.1
 
 Unofficial prerelease based on 0.6.1. Use the latest [WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphics/releases) package. Hardware validation is limited to a single Tiger Lake `9A49` system on Sequoia 15.8.1.

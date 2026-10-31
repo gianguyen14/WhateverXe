@@ -15,6 +15,7 @@ code=r'''
 struct OSData {void *data=nullptr;unsigned bytes=0;void *getBytesNoCopy(){return data;}unsigned getLength(){return bytes;}};
 #define OSDynamicCast(T,p) static_cast<T *>(p)
 struct IOService {OSData *property=nullptr;OSData *getProperty(const char *){return property;}};
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {static IORegistryEntry *getRegistryRoot(){static IORegistryEntry r;return &r;}void setProperty(const char*,bool){}};
 XELP::ProbeConfig seen;unsigned calls=0;
 bool configure(void *c,const XELP::ProbeConfig *p){assert(c==(void*)1);seen=*p;++calls;return p->valid();}

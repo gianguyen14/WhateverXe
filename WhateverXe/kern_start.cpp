@@ -9,6 +9,7 @@
 #include <Headers/kern_api.hpp>
 
 #include "kern_host.hpp"
+#include "kern_diag.hpp"
 
 static XeHost host;
 
@@ -37,6 +38,7 @@ PluginConfiguration ADDPR(config) {
 	KernelVersion::BigSur,
 	KernelVersion::Tahoe,
 	[]() {
+		wexDiagRoot();
 		host.init();
 	}
 };

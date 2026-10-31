@@ -28,6 +28,7 @@ struct OSObject {
  void release() { std::lock_guard<std::mutex> lock(refLock); assert(retained[this] > 0); --retained[this]; }
 };
 struct IOService {};
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {
  static IORegistryEntry *getRegistryRoot() { static IORegistryEntry root; return &root; }
  template<class... T> void setProperty(T...) {}

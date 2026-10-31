@@ -12,6 +12,7 @@ struct OSData:OSObject {
  void *getBytesNoCopy(){return bytes.data();}uint32_t getLength(){return bytes.size();}
 };
 struct IOService {OSObject *property {};unsigned reads {};OSObject *getProperty(const char *n){assert(!strcmp(n,"tgl-tc-wiring"));++reads;return property;}};
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {
  uint32_t record[10] {},candidates {};unsigned writes {};
  void setProperty(const char *name,uint32_t value,unsigned bits){assert(bits==32);if(!strcmp(name,"WhateverXeDPAltCandidates"))return;assert(!strcmp(name,"WhateverXeTCDPCandidates"));candidates=value;}

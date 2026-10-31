@@ -23,6 +23,7 @@ void await(std::atomic<bool>&flag){auto end=std::chrono::steady_clock::now()+std
 void IORecursiveLockLock(IORecursiveLock*p){if(worker==1)secondAttempt=true;p->lock();}
 void IORecursiveLockUnlock(IORecursiveLock*p){p->unlock();}
 #define FunctionCast(name,address) reinterpret_cast<decltype(&name)>(address)
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {static IORegistryEntry *getRegistryRoot(){static IORegistryEntry s;return &s;}template<class...A>void setProperty(A...){};};
 void tglConnectionRecord(void*,unsigned,bool,uint32_t,uint32_t,void*){}
 void tglAUXRecord(void*,unsigned,bool,uint32_t,uint32_t,uint32_t){}

@@ -12,6 +12,7 @@ bool tglQuietTraining() { return quiet; }
 using IOSimpleLock = int;
 unsigned IOSimpleLockLockDisableInterrupt(IOSimpleLock *) { return 0; }
 void IOSimpleLockUnlockEnableInterrupt(IOSimpleLock *, unsigned) {}
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {
  static IORegistryEntry *getRegistryRoot() { static IORegistryEntry r; return &r; }
  template<class... T> void setProperty(T...) {}

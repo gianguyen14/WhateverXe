@@ -11,6 +11,7 @@ f=r'''
 #include <initializer_list>
 #define FunctionCast(f,p) reinterpret_cast<decltype(&f)>(p)
 bool tglQuietTraining(){return true;}
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry{static IORegistryEntry*getRegistryRoot(){static IORegistryEntry r;return &r;}template<class...T>void setProperty(T...){}};
 struct XE {
  bool tglPhyClockPreserveReady=true,tglDekelReady=true;uintptr_t orgTGLPhyClockGating;

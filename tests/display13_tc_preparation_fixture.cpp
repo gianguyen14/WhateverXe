@@ -10,6 +10,7 @@
 #include "kern_xelp_link_requirements.hpp"
 #include "kern_xelp_sst_route.hpp"
 struct OSObject {unsigned size=0x700;unsigned refs=0;const OSObject*getMetaClass(){return this;}unsigned getClassSize()const{return size;}void retain(){++refs;}void release(){assert(refs);--refs;}};
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {static IORegistryEntry *getRegistryRoot(){static IORegistryEntry r;return &r;}template<class...T>void setProperty(T...){} bool getProperty(const char*){return false;}};
 constexpr unsigned kIOReturnSuccess=0,kIOReturnNotReady=0xe00002d8;
 #define OSSafeReleaseNULL(p) do{(p)->release();(p)=nullptr;}while(0)

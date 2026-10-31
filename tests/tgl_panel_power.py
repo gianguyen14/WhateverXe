@@ -24,6 +24,7 @@ code=r'''
 #include <sys/mman.h>
 using OSObject=unsigned;
 using mach_vm_address_t=uintptr_t;
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {
  unsigned calls=0; OSObject *last=nullptr; bool result=true;
  bool setProperty(const char *key,OSObject *value) {

@@ -13,6 +13,7 @@ code=r'''
 struct XE {uintptr_t orgTGLAGDCAUX;static uint32_t wrapTGLAGDCAUX(void*,void*,void*);};
 XE state,*callbackXE=&state;
 #define FunctionCast(f,p) reinterpret_cast<decltype(&f)>(p)
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {
  static IORegistryEntry *getRegistryRoot(){static IORegistryEntry e;return &e;}
  template<class... A>void setProperty(A...){}

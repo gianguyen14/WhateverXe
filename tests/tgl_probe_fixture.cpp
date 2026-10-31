@@ -23,6 +23,7 @@ uint32_t tglConnectionCaller(void *) { return 5; }
 void clock_get_uptime(uint64_t *p) { *p=42; }
 void absolutetime_to_nanoseconds(uint64_t a,uint64_t *p) { *p=a; }
 void *current_thread() { return reinterpret_cast<void *>(7); }
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {
  static IORegistryEntry *getRegistryRoot() { static IORegistryEntry r;return &r; }
  template<class... T> void setProperty(T...) {}

@@ -27,6 +27,7 @@ code=r'''
 #include <sys/mman.h>
 #define FunctionCast(f,p) reinterpret_cast<decltype(&f)>(p)
 constexpr uint32_t kIOReturnNotReady=0xe00002d8;
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {static IORegistryEntry* getRegistryRoot(){static IORegistryEntry o;return &o;}void setProperty(const char*,bool){}};
 struct KernelPatcher {
  enum class Error{NoError,Failed};bool fail=false;unsigned routes=0,blocks=0;uintptr_t delta=0;

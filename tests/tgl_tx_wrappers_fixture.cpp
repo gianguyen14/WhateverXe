@@ -7,6 +7,7 @@
 #include "kern_tgl_tc_boot.hpp"
 #include "kern_tgl_port_map.hpp"
 struct IOService;
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {
  static IORegistryEntry *getRegistryRoot(){static IORegistryEntry r;return &r;}
  template<class... T>void setProperty(T...){}

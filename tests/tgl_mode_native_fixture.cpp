@@ -21,6 +21,7 @@ constexpr uint32_t kIOReturnNotReady=0xe00002d8;
 uintptr_t testCaller=0;
 #define __builtin_return_address(n) reinterpret_cast<void *>(testCaller)
 #define FunctionCast(name, address) reinterpret_cast<decltype(&name)>(address)
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {
  static IORegistryEntry *getRegistryRoot(){static IORegistryEntry s;return &s;}
  template<class... A> void setProperty(A...) {}

@@ -13,6 +13,7 @@ template<class... T>void tglTransitionRecord(T...){ }
 #define FunctionCast(f,p) reinterpret_cast<decltype(&f)>(p)
 void *current_thread(){return (void*)1;}unsigned delays=0,writes=0,natives=0;uint32_t lastReg;
 void IODelay(unsigned n){assert(n==8);++delays;}
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {static IORegistryEntry *getRegistryRoot(){static IORegistryEntry v;return &v;}void setProperty(const char*,bool){} };
 struct XE {
  static bool comboBeginClock(void*,void*,bool,bool&){assert(false);return false;}

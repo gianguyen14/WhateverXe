@@ -32,6 +32,7 @@ struct {void *lock=(void*)1;XELPComboClock::ClockAllocation allocation;} comboCl
 using mach_vm_address_t=uintptr_t;
 void IORecursiveLockLock(void*){}void IORecursiveLockUnlock(void*){}
 struct IOService {void setProperty(const char*,bool) {}};
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {
  static IORegistryEntry *getRegistryRoot(){static IORegistryEntry r;return &r;}
  template<class...T>void setProperty(T...){}

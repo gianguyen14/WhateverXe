@@ -35,6 +35,7 @@ code = r'''
 #include <vector>
 #include <sys/mman.h>
 DECLARATIONS
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {
  static IORegistryEntry *getRegistryRoot(){static IORegistryEntry r; return &r;}
  void setProperty(const char *,bool){}

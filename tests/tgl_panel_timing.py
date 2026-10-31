@@ -27,6 +27,7 @@ code=r'''
 #include <sys/mman.h>
 using mach_vm_address_t=uintptr_t;
 #define FunctionCast(fn,addr) reinterpret_cast<decltype(&fn)>(addr)
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {
  void setProperty(const char *,bool){}
  void setProperty(const char *,void *,size_t){}

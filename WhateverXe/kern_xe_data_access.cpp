@@ -1,5 +1,6 @@
 // Copyright (c) 2026 b00t0x. BSD-3-Clause.
 #include "kern_xe_data_access.hpp"
+#include "kern_diag.hpp"
 #include "kern_xe_data_policy.hpp"
 #include <Headers/kern_api.hpp>
 #include <IOKit/IORegistryEntry.h>
@@ -93,10 +94,10 @@ void XeDataAccess::processKernel(KernelPatcher &p) {
     p.clearError();
     signatureValid = reinterpret_cast<decltype(signatureValid)>(p.solveSymbol(KernelPatcher::KernelID, "_cs_valid"));
     p.clearError();
-    IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeWebKitIdentitySymbols",
+    wexDiagRoot()->setProperty("WhateverXeWebKitIdentitySymbols",
         signingIdentity && platformBinary && signatureValid);
     enabled = currentProcess && executableVnode && fileVnode && getPath && putVnode;
-    IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeDataAccessSymbols", enabled);
+    wexDiagRoot()->setProperty("WhateverXeDataAccessSymbols", enabled);
 }
 bool XeDataAccess::processKext(KernelPatcher &p, size_t index, mach_vm_address_t address, size_t size) {
     if (index != sandbox.loadIndex) return false;
@@ -121,7 +122,7 @@ bool XeDataAccess::processKext(KernelPatcher &p, size_t index, mach_vm_address_t
         ready = p.routeMultiple(index, routes, arrsize(routes), address, size);
         p.clearError();
     }
-    IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeDataAccess", ready);
+    wexDiagRoot()->setProperty("WhateverXeDataAccess", ready);
     SYSLOG("wex", "GPU Data access ready=%d", ready);
     return true;
 }

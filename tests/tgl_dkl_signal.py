@@ -26,6 +26,7 @@ bool tglQuietTraining(){return std::getenv("TGL_TEST_QUIET") != nullptr;}
 #include <fstream>
 #include <vector>
 #include <sys/mman.h>
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {
  static IORegistryEntry* getRegistryRoot(){static IORegistryEntry a;return &a;}
  void setProperty(const char*,const void*,size_t){}

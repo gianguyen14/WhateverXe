@@ -16,6 +16,7 @@ void clock_get_uptime(uint64_t*p){*p=42;}
 void absolutetime_to_nanoseconds(uint64_t a,uint64_t*p){*p=a;}
 void *current_thread(){return reinterpret_cast<void*>(1);}
 std::vector<uint64_t> record;
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {
  static IORegistryEntry *getRegistryRoot(){static IORegistryEntry r;return &r;}
  void setProperty(const char*,void*p,size_t n){record.assign((uint64_t*)p,(uint64_t*)p+n/8);}

@@ -24,6 +24,7 @@ using mach_vm_address_t=uintptr_t;
 #define arrsize(a) (sizeof(a)/sizeof((a)[0]))
 #define SYSLOG(...) do{}while(0)
 struct IOService{};using SInt32=int32_t;
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {
  static std::map<std::string,bool> props;
  static IORegistryEntry *getRegistryRoot(){static IORegistryEntry r;return &r;}

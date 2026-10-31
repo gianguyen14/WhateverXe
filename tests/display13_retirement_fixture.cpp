@@ -14,6 +14,7 @@ void IOLockLock(int*){assert(!ownerDepth);++ownerDepth;}void IOLockUnlock(int*){
 struct OSObject {void **table;unsigned size,refs;OSObject *getMetaClass(){return this;}unsigned getClassSize(){return size;}
  void retain(){++refs;}void release(){assert(refs);--refs;}};
 using IOService=OSObject;
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {static IORegistryEntry *getRegistryRoot(){static IORegistryEntry r;return &r;}
  template<class... T>void setProperty(T...) {}};
 #define FunctionCast(f,p) reinterpret_cast<decltype(&f)>(p)

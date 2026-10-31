@@ -11,6 +11,7 @@
 #include "kern_display13_fb_topology.hpp"
 #include "kern_display13_fb_memory.hpp"
 using mach_vm_address_t=uintptr_t;
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {static IORegistryEntry *getRegistryRoot(){static IORegistryEntry r;return &r;} void setProperty(const char*,bool){}};
 struct KernelPatcher {
  enum class Error{NoError,Failed};bool fail=false,corrupt=false;unsigned writes=0;

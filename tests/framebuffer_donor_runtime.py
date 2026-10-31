@@ -28,6 +28,7 @@ code = r'''
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {
  static IORegistryEntry *getRegistryRoot(){static IORegistryEntry r;return &r;}
  void setProperty(const char *,const void *,size_t){}

@@ -25,6 +25,7 @@ struct XE {
  static uint32_t wrapTGLAGDCPortStatus(void*,void*,void*);
 } state,*callbackXE=&state;
 #define FunctionCast(f,p) reinterpret_cast<decltype(&f)>(p)
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {static IORegistryEntry *getRegistryRoot(){static IORegistryEntry e;return &e;}
  template<class... A>void setProperty(A...){} };
 template<class... A>void tglTrace(A...){}

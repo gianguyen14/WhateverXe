@@ -15,6 +15,7 @@ code=r'''
 struct OSSymbol {};
 struct Meta {unsigned getClassSize(){return 0x1C20;}};
 struct IOService {alignas(8) unsigned char data[0x1C20] {};Meta *getMetaClass(){static Meta m;return &m;}};
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {static IORegistryEntry *getRegistryRoot(){static IORegistryEntry r;return &r;}void setProperty(const char*,const void*,unsigned){}};
 using IOReturn=int;constexpr int kIOReturnSuccess=0,kIOReturnNotReady=1;
 using Call=IOReturn(*)(IOService*,const OSSymbol*,bool,void*,void*,void*,void*);

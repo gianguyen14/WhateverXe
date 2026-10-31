@@ -21,6 +21,7 @@ std::map<unsigned long,uint32_t> mmio;
 alignas(8) uint8_t ctl[0xf00]{},port[0x700]{},access[0x80]{},power[0x100]{};
 uint32_t config[6]{};
 template<class T>T &at(void *p,unsigned off){return *reinterpret_cast<T *>(static_cast<uint8_t *>(p)+off);}
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {
  static IORegistryEntry *getRegistryRoot(){static IORegistryEntry o;return &o;}
  void setProperty(const char *,void *,unsigned){}

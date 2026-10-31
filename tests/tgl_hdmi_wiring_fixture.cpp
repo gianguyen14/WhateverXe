@@ -16,6 +16,7 @@
 struct OSObject {virtual ~OSObject()=default;};
 struct OSData:OSObject {std::vector<uint8_t> data;void *getBytesNoCopy(){return data.data();}uint32_t getLength(){return data.size();}};
 struct IOService {OSObject *property {};unsigned reads {};OSObject *getProperty(const char *name){assert(!strcmp(name,"tgl-hdmi-wiring"));++reads;return property;}};
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {
  static IORegistryEntry *getRegistryRoot(){static IORegistryEntry r;return &r;}
  template<class... A> void setProperty(A...){}

@@ -12,6 +12,7 @@ bool tglQuietTraining(){return quiet;}
 unsigned IOSimpleLockLockDisableInterrupt(void*){assert(!locked);locked=true;++locks;return 0;}
 void IOSimpleLockUnlockEnableInterrupt(void*,unsigned){assert(locked);locked=false;}
 std::map<std::string,std::vector<uint32_t>> published;
+#define wexDiagRoot() IORegistryEntry::getRegistryRoot()
 struct IORegistryEntry {
  static IORegistryEntry *getRegistryRoot(){static IORegistryEntry r;return &r;}
  void setProperty(const char *key,const void *p,size_t n){assert(!locked);auto b=static_cast<const uint32_t*>(p);published[key]={b,b+n/4};}
