@@ -8,6 +8,8 @@ WhateverXeは、一部のIntel Xe-LP内蔵GPU向けにAppleのグラフィック
 
 WEXとWhateverXe Graphicsは、どちらも最新版を使用してください。
 
+本リポジトリは[b00t0x/WhateverXe](https://github.com/b00t0x/WhateverXe)の非公式forkで、SequoiaでのTiger Lake GPUリカバリを有効にしています。forkのリリースはタグに`-sequoia.N`を付けたプレリリースとして公開し、kextのbundle identifierとバージョンはupstreamと同じです。fork固有の問題はupstreamではなく本リポジトリへ報告してください。
+
 ## 対応範囲
 
 単一のWEXバイナリと1つのグラフィックスpkgで、以下のmacOSに対応します。

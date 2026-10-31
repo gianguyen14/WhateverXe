@@ -12,6 +12,11 @@ the graphics stack under `/Library` and updates the Auxiliary Kernel Collection
 have independent release versions. Use the latest releases of both WEX and
 WhateverXe Graphics.
 
+This is an unofficial fork of [b00t0x/WhateverXe](https://github.com/b00t0x/WhateverXe)
+that enables Tiger Lake GPU recovery on Sequoia. Fork releases use a `-sequoia.N`
+tag suffix and are published as prereleases; the kext keeps the upstream bundle
+identifier and version. Report fork-specific problems here, not upstream.
+
 ## Compatibility
 
 One WEX binary and one graphics pkg cover the following macOS versions:

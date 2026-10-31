@@ -39,10 +39,12 @@ def main():
     assert info['CFBundleIdentifier'] == 'org.b00t0x.WhateverXe'
     assert manifest['version'] == version and manifest['configuration'] == args.configuration
     assert sha(source_exe) == manifest['sha256'], 'build manifest mismatch'
-    assert not args.tag or args.tag.removeprefix('v') == version, 'tag/version mismatch'
+    # Fork releases keep the numeric kext version and add a SemVer prerelease suffix.
+    release = args.tag.removeprefix('v') or version
+    assert re.fullmatch(re.escape(version) + r'(-[0-9A-Za-z.]+)?', release), 'tag/version mismatch'
     assert run('xcrun', 'lipo', '-archs', source_exe) == 'x86_64'
     output.mkdir(parents=True, exist_ok=True)
-    archive = output / f'WhateverXe-{version}-{args.configuration}.zip'
+    archive = output / f'WhateverXe-{release}-{args.configuration}.zip'
     with tempfile.TemporaryDirectory(prefix='wex-package-') as temporary:
         stage = Path(temporary)
         bundle = stage / source.name

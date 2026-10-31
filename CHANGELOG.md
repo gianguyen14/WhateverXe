@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.1-sequoia.1
+
+Unofficial prerelease based on 0.6.1. Use the latest [WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphics/releases) package. Hardware validation is limited to a single Tiger Lake `9A49` system on Sequoia 15.8.1.
+
+### Changed
+
+- Use single-pass Tiger Lake GPU recovery on Sequoia with `-disablegfxfirmware`, as on Big Sur and Tahoe, so a GPU reset returns to native scheduling instead of waiting inside the recovery work loop.
+- Capture GPU hang details and the failure-only command-streamer wake on Sequoia.
+- Accept Sequoia servicing kernels after Darwin 24.6.
+- Keep the optional completion-cache, indirect-context-cache, same-tail restore, GSYNC-disable and full-slice RPCS overrides disabled on every macOS version.
+
 ## 0.6.1
 
 Use the latest [WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphics/releases) package.
