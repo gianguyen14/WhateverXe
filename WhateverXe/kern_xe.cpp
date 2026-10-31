@@ -14157,6 +14157,12 @@ struct TGLCSBEngine {
 // Exact donor kIGHwCsDesc has six 0x79-byte records, IDs0..5. The scheduler's
 // `index > 4` exit is AFTER construction, so it also constructs ID5.
 } tglCSBEngines[6];
+using TGLGateTryClose=bool (*)(void *);
+using TGLGateOpen=void (*)(void *);
+TGLGateTryClose tglBusyTryClose {};
+TGLGateOpen tglBusyOpenGate {};
+uint64_t *tglTimestampDenominator {};
+uint64_t tglBusyLastSample[TGLBusy::Engines] {};
 
 struct TGLCSBIO {
  uint8_t *streamer, *owner;
@@ -14325,6 +14331,12 @@ bool XE::installTGLCSB12(KernelPatcher &patcher,size_t index,mach_vm_address_t a
    !memcmp(reinterpret_cast<void *>(address+0x1674C),prologue,sizeof(prologue));
   patcher.clearError();
   if (statsOK) {
+   // Live sampling is optional on top: exact kernel gate symbols and the
+   // donor's timestamp denominator, or the switch-out accounting alone.
+   tglBusyTryClose=reinterpret_cast<TGLGateTryClose>(patcher.solveSymbol(KernelPatcher::KernelID,"__ZN10IOWorkLoop12tryCloseGateEv"));patcher.clearError();
+   tglBusyOpenGate=reinterpret_cast<TGLGateOpen>(patcher.solveSymbol(KernelPatcher::KernelID,"__ZN10IOWorkLoop8openGateEv"));patcher.clearError();
+   auto denominator=patcher.solveSymbol(index,"_g_timestampFreqPerDenominator",address,size);patcher.clearError();
+   tglTimestampDenominator=denominator==address+0x14A5B8 ? reinterpret_cast<uint64_t *>(denominator) : nullptr;
    KernelPatcher::RouteRequest busy[] {
     {tracker,wrapTGLBusyTracker,orgTGLBusyTracker},
     {stats,wrapTGLStatsWrite,orgTGLStatsWrite}
@@ -14358,11 +14370,44 @@ bool XE::wrapTGLCSBInit(void *streamer,void *owner,void *loop,void *scheduler,un
  return ok;
 }
 void XE::wrapTGLCSBWake(void *streamer) { tglCSBInitialize(streamer); }
+// Account the running context's live run time on each statistics read. Uses
+// tryCloseGate on the streamer's work loop: a busy gate skips this sample, so
+// a reader never waits on the GPU loop, and the active work item cannot be
+// retired while it is inspected.
+void tglBusySampleLive(uint8_t *owner) {
+ if (!owner || !tglBusyTryClose || !tglBusyOpenGate || !tglTimestampDenominator) return;
+ const uint64_t denominator=*tglTimestampDenominator;
+ if (!denominator) return;
+ for (unsigned e=0;e<TGLBusy::Engines;++e) {
+  auto s=static_cast<uint8_t *>(tglCSBEngines[e].streamer);
+  if (!s || !tglCSBEngines[e].hardwareReady || *reinterpret_cast<uint8_t **>(s+0x10)!=owner) continue;
+  auto loop=*reinterpret_cast<void **>(s+0x18);
+  if (!loop || !tglBusyTryClose(loop)) continue;
+  const uint64_t now=mach_absolute_time(), last=tglBusyLastSample[e];
+  tglBusyLastSample[e]=now;
+  const uint32_t active=*reinterpret_cast<uint32_t *>(s+0x50);
+  auto item=active<2 ? *reinterpret_cast<uint8_t **>(s+0x30+active*16) : nullptr;
+  auto context=item ? *reinterpret_cast<uint8_t **>(item) : nullptr;
+  auto busy=TGLBusy::accumulator(owner,e);
+  if (context && busy && context[TGLBusy::ContextEngine]==e) {
+   TGLCSBIO io(s,0);io.acquire();
+   const uint32_t live=*reinterpret_cast<volatile uint32_t *>(io.bar+io.pointerReg+TGLBusy::CtxTimestampFromCSBPointer);
+   auto baseline=reinterpret_cast<uint32_t *>(context+TGLBusy::ContextBaseline);
+   const uint64_t window=last && now>last ? TGLBusy::nsToTicks(now-last,denominator) : 0;
+   const uint32_t ticks=TGLBusy::liveTicks(live,*baseline,window);
+   if (ticks) __atomic_fetch_add(busy,TGLBusy::ticksToNs(ticks,denominator),__ATOMIC_RELAXED);
+   if (live-*baseline<0x80000000u) *baseline=live;
+  }
+  tglBusyOpenGate(loop);
+ }
+}
+
 void XE::wrapTGLBusyTracker(void *tracker,void *context) {
  FunctionCast(wrapTGLBusyTracker,callbackXE->orgTGLBusyTracker)(tracker,context);
  TGLBusy::account(static_cast<uint8_t *>(tracker),static_cast<uint8_t *>(context));
 }
 void XE::wrapTGLStatsWrite(void *stats,void *dict,bool full) {
+ if (full && stats) tglBusySampleLive(*reinterpret_cast<uint8_t **>(static_cast<uint8_t *>(stats)+0x10));
  FunctionCast(wrapTGLStatsWrite,callbackXE->orgTGLStatsWrite)(stats,dict,full);
  // Replace the donor's frequency scaling; its inputs are Gen11 registers.
  auto owner=stats ? *reinterpret_cast<uint8_t **>(static_cast<uint8_t *>(stats)+0x10) : nullptr;

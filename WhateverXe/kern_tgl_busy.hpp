@@ -51,6 +51,32 @@ inline bool account(uint8_t *tracker, uint8_t *context) {
 	return true;
 }
 
+// A context's run time is only accounted when it is switched out, so a
+// long-running context (lite restore keeps it on the engine) showed as idle and
+// then as one burst. On each statistics read, sample the running context's live
+// RING_CTX_TIMESTAMP (engine base + 0x3A8 = CSB pointer register + 8) against
+// the tracker's baseline (IGHardwareContext+0xCC), account the difference and
+// advance the baseline so the native switch-out only adds the remainder.
+constexpr uint32_t ContextBaseline = 0xCC, CtxTimestampFromCSBPointer = 8;
+
+// Ticks to account for a live sample: progress since the baseline, at most the
+// wall time since this engine's previous sample (run time from before it is
+// left to the native switch-out). A backwards reading accounts nothing.
+inline uint32_t liveTicks(uint32_t live, uint32_t baseline, uint64_t maxTicks) {
+	const uint32_t ticks = live - baseline;
+	if (ticks >= 0x80000000u) return 0;
+	return ticks < maxTicks ? ticks : static_cast<uint32_t>(maxTicks);
+}
+
+// Native conversion (IGHwCsStatsTracker): ticks * 10000 / denominator = ns.
+inline uint64_t ticksToNs(uint64_t ticks, uint64_t denominator) {
+	return denominator ? ticks * 10000 / denominator : 0;
+}
+
+inline uint64_t nsToTicks(uint64_t ns, uint64_t denominator) {
+	return denominator * ns / 10000;
+}
+
 // "Device Utilization %" is busy time scaled by current/maximum frequency. The
 // donor derives both from Gen11 registers that do not hold them on Tiger Lake
 // (the scaled value exceeded 100). Use GEN12_RPSTAT1 CAGF (16.67 MHz units) and

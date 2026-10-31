@@ -66,6 +66,17 @@ int main() {
 	assert(scaledUtilization(40, 0, cap) == 40 && scaledUtilization(40, cagf1100, 0) == 40);
 	assert(scaledUtilization(0, cagf1100, cap) == 0);
 
+	// Live sampling: progress within wall time is accounted; wrap is handled.
+	assert(liveTicks(1500, 1000, 1000) == 500);
+	assert(liveTicks(10, 0xFFFFFFF0u, 1000) == 26);
+	assert(liveTicks(1000, 1000, 1000) == 0);          // no progress
+	assert(liveTicks(5000, 1000, 1000) == 1000);       // clamped to wall time
+	assert(liveTicks(900, 1000, 1000) == 0);           // went backwards
+	assert(liveTicks(5000, 1000, 0) == 0);             // first sample: no window
+	// 19.2 MHz timestamp: denominator 192, one tick = 52.08 ns.
+	assert(ticksToNs(192, 192) == 10000 && ticksToNs(1, 0) == 0);
+	assert(nsToTicks(10000, 192) == 192);
+
 	puts("tgl_busy ok");
 	return 0;
 }
