@@ -4433,6 +4433,13 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
             if(tglGT2Detected) {
                 physicalGPU->setProperty("TGLGT2Qualified",tglGT2Ready);
                 physicalGPU->setProperty("TGLGT2Boot",&gt,sizeof(gt));
+                // An unlisted fuse shape (i5-1145G7: 5 DSS, 80 EU, 6 L3 banks) is not
+                // a reason to withhold acceleration: keep the 0.6.1 donor URB layout,
+                // which these parts ran on, instead of the fuse-derived replacement.
+                if(!tglGT2Ready) {
+                    tglGT2Detected=false;
+                    physicalGPU->setProperty("TGLGT2DonorLayout",true);
+                }
             }
             if(display12SmallGTDetected)physicalGPU->setProperty(adlsDisplaySelected?"ADLSGTQualified":"XELPSmallGTQualified",display12SmallGTReady);
             if(display12SmallGTDetected)physicalGPU->setProperty(adlsDisplaySelected?"ADLSGTBoot":"XELPSmallGTBoot",&gt,sizeof(gt));
