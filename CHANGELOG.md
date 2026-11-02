@@ -10,6 +10,22 @@
 - Scale the Tiger Lake GPU clock with load under `-disablegfxfirmware`. Without GuC SLPC the request stayed at RP0 whenever the GT was awake, taking power from the CPU on 15 W parts; it now follows RC6 residency between RP1 and RP0. `-wexrpsmax` restores the fixed RP0 request.
 - Report GPU utilization with `-disablegfxfirmware` on Tiger Lake. The native statistics page is filled by graphics firmware, so Activity Monitor and `PerformanceStatistics` always showed 0%; each context's measured GPU run time is now accounted there (Render and Compute together, Blit, and media engines, the three units the native reader reports, including the running context's live time at each read, with each unit's growth bounded by elapsed time), and the frequency-scaled value uses Tiger Lake's RPSTAT1/RP_STATE_CAP so it no longer exceeds 100%.
 
+## 0.7.0
+
+Use the latest [WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphics/releases) package with this update.
+
+### Added
+
+- Add USB-C DisplayPort Alt Mode output on Alder Lake-class GPUs, including multi-display startup and reconnection.
+- Add experimental MIPI DSI display support with graphics acceleration, brightness control, display off/on, rotation, HiDPI and external-display coexistence. Tested on GPD MicroPC 2 and CHUWI MiniBook X N100 only; do not expect it to work on other devices. System sleep/wake remains unsupported.
+
+### Fixed
+
+- Fix graphics initialization and acceleration on additional supported Tiger Lake and Alder/Raptor Lake GPU variants, including single-channel configurations.
+- Fix graphics initialization on compatible Sequoia and Tahoe updates without requiring an exact OS build match.
+- Fix display freezes during cursor resizing and improve multi-display startup and display off/on with MIPI DSI panels.
+- Fix system power-off hangs with a USB-C display connected on Alder Lake-class GPUs.
+
 ## 0.6.1-sequoia.1
 
 Unofficial prerelease based on 0.6.1. Use the latest [WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphics/releases) package. Hardware validation is limited to a single Tiger Lake `9A49` system on Sequoia 15.8.1.
