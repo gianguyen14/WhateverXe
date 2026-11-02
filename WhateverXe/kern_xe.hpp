@@ -714,6 +714,8 @@ private:
 	mach_vm_address_t orgTGLStatsWrite {}, orgTGLBusyTracker {};
 	static bool wrapTGLCSBInit(void *streamer, void *owner, void *loop, void *scheduler, unsigned engine);
 	static void wrapTGLCSBReset(void *streamer);
+	mach_vm_address_t orgTGLResetEngine {};
+	static bool wrapTGLResetEngine(void *ring, void *context);
 	static void wrapTGLCSBWake(void *streamer);
 	static void wrapTGLCSBProcess(void *streamer, uint32_t flags);
 	static void wrapTGLStatsWrite(void *stats, void *dict, bool full);

@@ -2,6 +2,7 @@
 #include "kern_diag.hpp"
 #include "kern_tgl_busy.hpp"
 #include "kern_tgl_rps.hpp"
+#include "kern_tgl_reset.hpp"
 #include <mach/clock.h>
 //
 //  kern_xe.cpp
@@ -14160,6 +14161,7 @@ bool xelpForceWakeIRQSerialize(void *,void *,OSSerialize *serializer) {
  const bool ok=data->serialize(serializer);data->release();return ok;
 }
 bool tglCSB12Enabled {false};
+bool tglResetEnabled {true};
 struct TGLCSBEngine {
  void *streamer {};
  TGLCSB::State state;
@@ -14261,9 +14263,12 @@ bool XE::installTGLCSB12(KernelPatcher &patcher,size_t index,mach_vm_address_t a
   {"__ZN26IGHardwareCommandStreamer54initEP22IOGraphicsAccelerator2P10IOWorkLoopP12IGScheduler510IGHwCsType",wrapTGLCSBInit,orgTGLCSBInit},
   {"__ZN26IGHardwareCommandStreamer511resetOnWakeEv",wrapTGLCSBWake,orgTGLCSBWake},
   {"__ZN26IGHardwareCommandStreamer515processGPUResetEv",wrapTGLCSBReset,orgTGLCSBReset},
-  {"__ZN26IGHardwareCommandStreamer526processContextStatusBufferEj",wrapTGLCSBProcess,orgTGLCSBProcess}
+  {"__ZN26IGHardwareCommandStreamer526processContextStatusBufferEj",wrapTGLCSBProcess,orgTGLCSBProcess},
+  {"__ZN20IGHardwareRingBuffer19resetGraphicsEngineEP17IGHardwareContext",wrapTGLResetEngine,orgTGLResetEngine}
  };
- const uint32_t offsets[] {0x39A78,0x3A292,0x3A396,0x3B1C2};
+ const uint32_t offsets[] {0x39A78,0x3A292,0x3A396,0x3B1C2,0x43576};
+ // -wexnoreset keeps the donor's unbounded GDRST wait without the handshake.
+ tglResetEnabled=!checkKernelArgument("-wexnoreset");
  bool ok=size>0x3CC84;
  for (unsigned i=0;i<arrsize(routes);++i)
   ok=ok && patcher.solveSymbol<mach_vm_address_t>(index,routes[i].symbol,address,size)==address+offsets[i];
@@ -14452,6 +14457,32 @@ void XE::wrapTGLStatsWrite(void *stats,void *dict,bool full) {
 void XE::wrapTGLCSBReset(void *streamer) {
  tglCSBInitialize(streamer);
  FunctionCast(wrapTGLCSBReset,callbackXE->orgTGLCSBReset)(streamer);
+}
+// IGHardwareRingBuffer: +0x10 accelerator, +0x40 engine ID, +0x50 MMIO, +0x70 GDRST domain.
+bool XE::wrapTGLResetEngine(void *ring,void *context) {
+ auto r=static_cast<uint8_t *>(ring);
+ auto owner=*reinterpret_cast<uint8_t **>(r+0x10);
+ auto bar=*reinterpret_cast<volatile uint8_t **>(r+0x50);
+ const unsigned engine=r[0x40];
+ const uint32_t donorDomain=*reinterpret_cast<uint32_t *>(r+0x70);
+ auto original=[&] {return FunctionCast(wrapTGLResetEngine,callbackXE->orgTGLResetEngine)(ring,context);};
+ if (!tglResetEnabled || !owner || !bar || engine>=TGLReset::Engines || !TGLReset::Domain[engine]) return original();
+ struct IO {
+  volatile uint8_t *bar;
+  uint32_t read(uint32_t o) {return *reinterpret_cast<volatile uint32_t *>(bar+o);}
+  void write(uint32_t o,uint32_t v) {*reinterpret_cast<volatile uint32_t *>(bar+o)=v;(void)read(o);}
+  void delayUs(unsigned n) {IODelay(n);}
+ } io {bar};
+ tglCSBForceWake[0](owner,true,7);
+ const auto report=TGLReset::reset(io,engine);
+ tglCSBForceWake[0](owner,false,7);
+ SYSLOG("igfx","TGL engine reset e=%u result=%u ready=%u waited=%uus head=%x acthd=%x donor=%x",engine,
+  static_cast<unsigned>(report.result),report.ready,report.waitedUs,report.head,report.acthd,donorDomain);
+ // The donor would wait on this domain forever; report the failed reset instead.
+ if (report.result!=TGLReset::Result::Done) return false;
+ const bool ok=original();
+ SYSLOG("igfx","TGL engine reset e=%u replay=%u",engine,ok);
+ return ok;
 }
 void XE::wrapTGLCSBProcess(void *streamer,uint32_t flags) {
  TGLCSBIO io(streamer,flags);auto &engine=tglCSBEngines[io.engine];
