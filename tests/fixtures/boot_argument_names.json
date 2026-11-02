@@ -140,6 +140,7 @@
   "-wex-adlp-load-only": [],
   "-wex-display13-offline": [],
   "-wexdiag": [],
+  "-wexnohwdecode": [],
   "-wexnoreset": [],
   "-wexrpsmax": []
 }

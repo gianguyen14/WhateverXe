@@ -13476,7 +13476,15 @@ bool XE::wrapTGLAcceleratorStart(IOService *that, IOService *provider) {
 	// to the per-profile capability dictionary. The TGL personality has the
 	// dictionary but omits the key; use the paired ICL host's registration value.
 	// This exposes decode only and does not invent additional profile support.
-	if (!that->getProperty("IOGVAHEVCDecode") &&
+	if (checkKernelArgument("-wexnohwdecode")) {
+		// Hardware decode can hang RCS in a media kernel that never retires
+		// (App Store previews through VTDecoderXPCService). Withdraw the
+		// decoder admission keys so VideoToolbox decodes in software; the
+		// encoder keys (IOGVABGRAEnc, IOGVAHEVCEncodeCapabilities) stay.
+		that->removeProperty("IOGVACodec");
+		that->removeProperty("IOGVAHEVCDecode");
+		that->removeProperty("IOGVAHEVCDecodeCapabilities");
+	} else if (!that->getProperty("IOGVAHEVCDecode") &&
 	    OSDynamicCast(OSDictionary, that->getProperty("IOGVAHEVCDecodeCapabilities")))
 		that->setProperty("IOGVAHEVCDecode", "2");
 

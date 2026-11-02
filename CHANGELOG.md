@@ -4,6 +4,7 @@
 
 ### Changed
 
+- Add `-wexnohwdecode`, which withdraws the hardware decoder admission keys (`IOGVACodec`, `IOGVAHEVCDecode`, `IOGVAHEVCDecodeCapabilities`) so VideoToolbox decodes video in software. Hardware decode can hang the render engine on Tiger Lake under `-disablegfxfirmware`; the encoder keys are kept.
 - Reset a hung Tiger Lake engine with the Gen12 `RING_RESET_CTL` handshake and a bounded `GDRST` wait under `-disablegfxfirmware`. Without GuC the native reset waited on the domain forever, freezing the display when a video decode kernel never retired. Each reset logs `TGL engine reset`; `-wexnoreset` restores the native path.
 - Keep diagnostic records off the I/O Registry root. Clients that copy the root's properties, such as PerfPowerServices, serialized about 1100 records and several MB from live serializers on every call, holding a CPU core busy. Boot with `-wexdiag` to publish them on the root again.
 - Scale the Tiger Lake GPU clock with load under `-disablegfxfirmware`. Without GuC SLPC the request stayed at RP0 whenever the GT was awake, taking power from the CPU on 15 W parts; it now follows RC6 residency between RP1 and RP0. `-wexrpsmax` restores the fixed RP0 request.
