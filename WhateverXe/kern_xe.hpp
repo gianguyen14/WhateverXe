@@ -857,6 +857,8 @@ private:
 	static bool wrapTGLCSBInit(void *streamer, void *owner, void *loop, void *scheduler, unsigned engine);
 	static void wrapTGLCSBReset(void *streamer);
 	mach_vm_address_t orgTGLResetEngine {};
+	mach_vm_address_t orgTGLVideoContextAttach {};
+	static bool wrapTGLVideoContextAttach(void *context, void *provider);
 	static bool wrapTGLResetEngine(void *ring, void *context);
 	static void wrapTGLCSBWake(void *streamer);
 	static void wrapTGLCSBProcess(void *streamer, uint32_t flags);

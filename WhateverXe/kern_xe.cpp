@@ -3,6 +3,8 @@
 #include "kern_tgl_busy.hpp"
 #include "kern_tgl_rps.hpp"
 #include "kern_tgl_reset.hpp"
+#include "kern_tgl_decode.hpp"
+#include <sys/proc.h>
 #include <mach/clock.h>
 //
 //  kern_xe.cpp
@@ -11469,6 +11471,20 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 				if (hostOK)
 					hostOK=installTGLCSB12(patcher,index,address,size);
 			}
+            if(checkKernelArgument("-wexnohwdecode")) {
+             // IGAccelVideoContext::attach: super::attach, then the method table.
+             const char *attach="__ZN19IGAccelVideoContext6attachEP9IOService";
+             const uint8_t head[] {0x55,0x48,0x89,0xE5,0x53,0x50,0x48,0x89,0xFB};
+             bool ready=size>0x77129 &&
+              patcher.solveSymbol<mach_vm_address_t>(index,attach,address,size)==address+0x770FE &&
+              !memcmp(reinterpret_cast<void *>(address+0x770FE),head,sizeof(head));
+             if(ready) {
+              KernelPatcher::RouteRequest route {attach,wrapTGLVideoContextAttach,orgTGLVideoContextAttach};
+              ready=patcher.routeMultiple(index,&route,1,address,size);
+             }
+             patcher.clearError();
+             wexDiagRoot()->setProperty("TGLDecoderContextsRefused",ready);
+            }
             if(adlnDetected && checkKernelArgument("-wex-adln-qtrace")) {
              const char *create="__ZN19IGAccelCommandQueue29createHardwareContextIfNeededEh";
              const char *process="__ZN19IGAccelCommandQueue20processCommandBufferEjj";
@@ -14055,10 +14071,8 @@ bool XE::wrapTGLAcceleratorStart(IOService *that, IOService *provider) {
 	// The current kernel personality uses 0x1080040, rejected by AppleGVA before
 	// AVD_CreateAVDAccelerator. The paired TGL VA donor returns 0x1080080.
 	// Align this registry identity only; keep the real PCI ID and TGL bundle.
-	// -wexnohwdecode keeps 0x1080040 so the decoder is refused at that check.
-	const bool noHardwareDecode=checkKernelArgument("-wexnohwdecode");
 	if (auto renderer = OSDynamicCast(OSNumber, that->getProperty("IOVARendererID"))) {
-		if (!noHardwareDecode && renderer->unsigned32BitValue() == 0x1080040)
+		if (renderer->unsigned32BitValue() == 0x1080040)
 			that->setProperty("IOVARendererID", 0x1080080, 32);
 	}
 
@@ -14066,10 +14080,8 @@ bool XE::wrapTGLAcceleratorStart(IOService *that, IOService *provider) {
 	// to the per-profile capability dictionary. The TGL personality has the
 	// dictionary but omits the key; use the paired ICL host's registration value.
 	// This exposes decode only and does not invent additional profile support.
-	if (noHardwareDecode) {
-		// Hardware decode can hang RCS in a media kernel that never retires
-		// (App Store previews through VTDecoderXPCService). Withdraw the HEVC
-		// decoder keys; IOGVACodec stays because the encoder needs it too.
+	if (checkKernelArgument("-wexnohwdecode")) {
+		// Decode-only keys. H.264 decode has none; see wrapTGLVideoContextAttach.
 		that->removeProperty("IOGVAHEVCDecode");
 		that->removeProperty("IOGVAHEVCDecodeCapabilities");
 	} else if (!that->getProperty("IOGVAHEVCDecode") &&
@@ -14759,6 +14771,7 @@ bool xelpForceWakeIRQSerialize(void *,void *,OSSerialize *serializer) {
 }
 bool tglCSB12Enabled {false};
 bool tglResetEnabled {true};
+uint64_t tglDecoderContextRefusals {};
 struct TGLCSBEngine {
  void *streamer {};
  TGLCSB::State state;
@@ -15054,6 +15067,17 @@ void XE::wrapTGLStatsWrite(void *stats,void *dict,bool full) {
 void XE::wrapTGLCSBReset(void *streamer) {
  tglCSBInitialize(streamer);
  FunctionCast(wrapTGLCSBReset,callbackXE->orgTGLCSBReset)(streamer);
+}
+// Refuse before start, so IOAccelerator releases the unstarted client.
+bool XE::wrapTGLVideoContextAttach(void *context,void *provider) {
+ char name[MAXCOMLEN*2+1] {};
+ proc_selfname(name,sizeof(name));
+ if (TGLDecode::refused(name)) {
+  if (!__atomic_fetch_add(&tglDecoderContextRefusals,1,__ATOMIC_RELAXED))
+   SYSLOG("igfx","TGL video context refused for %s (-wexnohwdecode)",name);
+  return false;
+ }
+ return FunctionCast(wrapTGLVideoContextAttach,callbackXE->orgTGLVideoContextAttach)(context,provider);
 }
 // IGHardwareRingBuffer: +0x10 accelerator, +0x40 engine ID, +0x50 MMIO, +0x70 GDRST domain.
 bool XE::wrapTGLResetEngine(void *ring,void *context) {
