@@ -4,6 +4,7 @@
 #include "kern_xelp_device.hpp"
 #include "kern_xe_data_access.hpp"
 #include "kern_backlight_profile.hpp"
+#include "kern_tgl_posh.hpp"
 #include <Headers/kern_api.hpp>
 #include <Headers/kern_iokit.hpp>
 #include <IOKit/pci/IOPCIDevice.h>
@@ -15,8 +16,17 @@ static const char *graphicsPath[] { "/System/Library/Extensions/IOGraphicsFamily
 static KernelPatcher::KextInfo graphics { "com.apple.iokit.IOGraphicsFamily",graphicsPath,arrsize(graphicsPath),{true},{},KernelPatcher::KextInfo::Unloaded };
 static const char *backlightPath[] { "/System/Library/Extensions/AppleBacklight.kext/Contents/MacOS/AppleBacklight" };
 static KernelPatcher::KextInfo backlight { "com.apple.driver.AppleBacklight",backlightPath,arrsize(backlightPath),{true},{},KernelPatcher::KextInfo::Unloaded };
+// Global page patch: every process that maps the exact 16.0.32 page gets it.
+static UserPatcher::BinaryModPatch poshPatch { CPU_TYPE_X86_64,0,TGLPosh::Find,TGLPosh::Replace,sizeof(TGLPosh::Find),0,1,UserPatcher::FileSegment::SegmentTextText,1 };
+static UserPatcher::BinaryModInfo poshDriver { TGLPosh::DriverPath,&poshPatch,1 };
 void XeHost::init() {
  callbackHost=this;
+ // Lilu reads the driver once while registering user patches and skips it if
+ // the Data volume is not readable yet; mtlleak_check shows whether it applied.
+ if(!checkKernelArgument("-wexnoposhfix")) {
+  if(lilu.onProcLoad(nullptr,0,nullptr,nullptr,&poshDriver,1)==LiluAPI::Error::NoError)SYSLOG("wex","TGL POSH leak fix registered");
+  else SYSLOG("wex","TGL POSH leak fix registration failed");
+ }
  PE_parse_boot_argn("gfxrst",&resetFramebuffer,sizeof(resetFramebuffer));
  if(resetFramebuffer>=FB_TOTAL)resetFramebuffer=FB_DETECT;
  lilu.onPatcherLoadForce([](void *u,KernelPatcher &p){static_cast<XeHost *>(u)->processKernel(p);},this);

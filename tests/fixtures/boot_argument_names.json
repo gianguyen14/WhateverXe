@@ -150,6 +150,7 @@
   "-wex-dsi-power-test": [],
   "-wexdiag": [],
   "-wexnohwdecode": [],
+  "-wexnoposhfix": [],
   "-wexnoreset": [],
   "-wexrpsmax": []
 }
