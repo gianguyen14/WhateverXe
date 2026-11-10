@@ -4,8 +4,11 @@
 #include "kern_xelp_device.hpp"
 #include "kern_xe_data_access.hpp"
 #include "kern_backlight_profile.hpp"
-#include "kern_tgl_posh.hpp"
+#include "kern_tgl_page_fix.hpp"
 #include <Headers/kern_api.hpp>
+#include <Headers/kern_mach.hpp>
+#include <Headers/kern_patcher.hpp>
+#include <sys/vnode.h>
 #include <Headers/kern_iokit.hpp>
 #include <IOKit/pci/IOPCIDevice.h>
 XeHost *XeHost::callbackHost;
@@ -16,17 +19,47 @@ static const char *graphicsPath[] { "/System/Library/Extensions/IOGraphicsFamily
 static KernelPatcher::KextInfo graphics { "com.apple.iokit.IOGraphicsFamily",graphicsPath,arrsize(graphicsPath),{true},{},KernelPatcher::KextInfo::Unloaded };
 static const char *backlightPath[] { "/System/Library/Extensions/AppleBacklight.kext/Contents/MacOS/AppleBacklight" };
 static KernelPatcher::KextInfo backlight { "com.apple.driver.AppleBacklight",backlightPath,arrsize(backlightPath),{true},{},KernelPatcher::KextInfo::Unloaded };
-// Global page patch: every process that maps the exact 16.0.32 page gets it.
-static UserPatcher::BinaryModPatch poshPatch { CPU_TYPE_X86_64,0,TGLPosh::Find,TGLPosh::Replace,sizeof(TGLPosh::Find),0,1,UserPatcher::FileSegment::SegmentTextText,1 };
-static UserPatcher::BinaryModInfo poshDriver { TGLPosh::DriverPath,&poshPatch,1 };
+namespace {
+using PageValidator=void (*)(vnode_t,memory_object_t,memory_object_offset_t,const void *,int *,int *,int *);
+PageValidator orgValidatePage;
+bool pageFixEnabled[TGLPageFix::KindCount],pageFixReady;
+uint64_t pageFixSeen[TGLPageFix::KindCount],pageFixPatched[TGLPageFix::KindCount];
+// Runs after the kernel's check of each signed page; see kern_tgl_page_fix.hpp.
+void validatePage(vnode_t vnode,memory_object_t pager,memory_object_offset_t offset,const void *data,int *validated,int *tainted,int *nx) {
+ orgValidatePage(vnode,pager,offset,data,validated,tainted,nx);
+ if(!validated || !tainted || !nx || *validated!=0xf || *tainted || *nx)return;
+ const auto kind=TGLPageFix::classify(data,TGLPageFix::PageSize,offset);
+ if(kind==TGLPageFix::None)return;
+ __atomic_fetch_add(&pageFixSeen[kind],1ULL,__ATOMIC_RELAXED);
+ if(!pageFixEnabled[kind] || MachInfo::setKernelWriting(true,KernelPatcher::kernelWriteLock)!=KERN_SUCCESS)return;
+ if(TGLPageFix::classify(data,TGLPageFix::PageSize,offset)==kind) {
+  TGLPageFix::apply(kind,const_cast<void *>(data));
+  __atomic_fetch_add(&pageFixPatched[kind],1ULL,__ATOMIC_RELAXED);
+ }
+ MachInfo::setKernelWriting(false,KernelPatcher::kernelWriteLock);
+}
+bool pageFixSerialize(void *,void *,OSSerialize *serializer) {
+ const uint64_t q[] {1,pageFixReady,pageFixEnabled[TGLPageFix::VA],pageFixEnabled[TGLPageFix::MTL],
+  __atomic_load_n(&pageFixSeen[TGLPageFix::VA],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::VA],__ATOMIC_RELAXED),
+  __atomic_load_n(&pageFixSeen[TGLPageFix::MTL],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::MTL],__ATOMIC_RELAXED)};
+ auto data=OSData::withBytes(q,sizeof(q));if(!data)return false;
+ const bool ok=data->serialize(serializer);data->release();return ok;
+}
+// -wexvaprobe only counts matching pages; it wins over the two fixes.
+void preparePageFix(KernelPatcher &patcher,IOPCIDevice *gpu,const XELP::Profile &profile) {
+ const bool probe=checkKernelArgument("-wexvaprobe");
+ const bool fixVA=!probe && checkKernelArgument("-wexvafix"),fixMTL=!probe && checkKernelArgument("-wexleakfix");
+ if(!probe && !fixVA && !fixMTL)return;
+ if(!gpu || getKernelVersion()!=KernelVersion::Sequoia || profile.overridden() || !XELP::same(profile,XELP::identify(0x9A498086,0x1)))return;
+ pageFixEnabled[TGLPageFix::VA]=fixVA;pageFixEnabled[TGLPageFix::MTL]=fixMTL;
+ KernelPatcher::RouteRequest route {"_cs_validate_page",validatePage,orgValidatePage};
+ pageFixReady=patcher.routeMultipleLong(KernelPatcher::KernelID,&route,1);
+ patcher.clearError();
+ if(auto live=OSSerializer::forTarget(nullptr,pageFixSerialize)){gpu->setProperty("TGLPageFixLive",live);live->release();}
+}
+}
 void XeHost::init() {
  callbackHost=this;
- // Lilu reads the driver once while registering user patches and skips it if
- // the Data volume is not readable yet; mtlleak_check shows whether it applied.
- if(!checkKernelArgument("-wexnoposhfix")) {
-  if(lilu.onProcLoad(nullptr,0,nullptr,nullptr,&poshDriver,1)==LiluAPI::Error::NoError)SYSLOG("wex","TGL POSH leak fix registered");
-  else SYSLOG("wex","TGL POSH leak fix registration failed");
- }
  PE_parse_boot_argn("gfxrst",&resetFramebuffer,sizeof(resetFramebuffer));
  if(resetFramebuffer>=FB_TOTAL)resetFramebuffer=FB_DETECT;
  lilu.onPatcherLoadForce([](void *u,KernelPatcher &p){static_cast<XeHost *>(u)->processKernel(p);},this);
@@ -45,6 +78,7 @@ void XeHost::processKernel(KernelPatcher &patcher) {
  // The host must dispatch framebuffer patches and accelerator rejection
  // hooks even when the selected profile deliberately has no Render backend.
  active=profile.displayAdmitted();
+ preparePageFix(patcher,published ? gpu : nullptr,profile);
  const auto display=XELP::displayAdapter(profile.family);
  backlightEnabled=active && (display==XELP::DisplayAdapter::TGL || display==XELP::DisplayAdapter::ADLS ||
   display==XELP::DisplayAdapter::ADLP || display==XELP::DisplayAdapter::ADLN) &&

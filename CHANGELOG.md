@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- Stop the Tiger Lake Metal driver from leaking memory in every Metal process. `AppleIntelTGLGraphicsMTLDriver` 16.0.32 never freed the 76 KB POSH buffer of a command buffer that was its queue's only active one, so WindowServer grew by about 4.5 MB/s at 60 frames per second (#47). Platform processes only load the bundle with its original signature, so its `dealloc` is patched in memory through Lilu and the file stays untouched; `-wexnoposhfix` disables this.
+- Add opt-in page fixes for Tiger Lake `9A49` on Sequoia, applied in memory after code-signing validation so the bundles stay untouched. `-wexvafix` stops streamed video from stalling the render engine (#81), `-wexleakfix` stops the Metal driver leaking 76 KB per command buffer (#47), and `-wexvaprobe` only counts the matching pages.
 
 ### Changed
 

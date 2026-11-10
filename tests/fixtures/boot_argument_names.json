@@ -149,8 +149,10 @@
   "-wex-dsi-hdmi-test": [],
   "-wex-dsi-power-test": [],
   "-wexdiag": [],
+  "-wexleakfix": [],
   "-wexnohwdecode": [],
-  "-wexnoposhfix": [],
   "-wexnoreset": [],
-  "-wexrpsmax": []
+  "-wexrpsmax": [],
+  "-wexvafix": [],
+  "-wexvaprobe": []
 }
