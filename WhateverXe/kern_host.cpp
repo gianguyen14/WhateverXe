@@ -39,9 +39,10 @@ void validatePage(vnode_t vnode,memory_object_t pager,memory_object_offset_t off
  MachInfo::setKernelWriting(false,KernelPatcher::kernelWriteLock);
 }
 bool pageFixSerialize(void *,void *,OSSerialize *serializer) {
- const uint64_t q[] {1,pageFixReady,pageFixEnabled[TGLPageFix::VA],pageFixEnabled[TGLPageFix::MTL],
+ const uint64_t q[] {2,pageFixReady,pageFixEnabled[TGLPageFix::VA],pageFixEnabled[TGLPageFix::MTL],
   __atomic_load_n(&pageFixSeen[TGLPageFix::VA],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::VA],__ATOMIC_RELAXED),
-  __atomic_load_n(&pageFixSeen[TGLPageFix::MTL],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::MTL],__ATOMIC_RELAXED)};
+  __atomic_load_n(&pageFixSeen[TGLPageFix::MTL],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::MTL],__ATOMIC_RELAXED),
+  __atomic_load_n(&pageFixSeen[TGLPageFix::XFER],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::XFER],__ATOMIC_RELAXED)};
  auto data=OSData::withBytes(q,sizeof(q));if(!data)return false;
  const bool ok=data->serialize(serializer);data->release();return ok;
 }
@@ -51,7 +52,7 @@ void preparePageFix(KernelPatcher &patcher,IOPCIDevice *gpu,const XELP::Profile 
  const bool fixVA=!probe && checkKernelArgument("-wexvafix"),fixMTL=!probe && checkKernelArgument("-wexleakfix");
  if(!probe && !fixVA && !fixMTL)return;
  if(!gpu || getKernelVersion()!=KernelVersion::Sequoia || profile.overridden() || !XELP::same(profile,XELP::identify(0x9A498086,0x1)))return;
- pageFixEnabled[TGLPageFix::VA]=fixVA;pageFixEnabled[TGLPageFix::MTL]=fixMTL;
+ pageFixEnabled[TGLPageFix::VA]=fixVA;pageFixEnabled[TGLPageFix::XFER]=fixVA;pageFixEnabled[TGLPageFix::MTL]=fixMTL;
  KernelPatcher::RouteRequest route {"_cs_validate_page",validatePage,orgValidatePage};
  pageFixReady=patcher.routeMultipleLong(KernelPatcher::KernelID,&route,1);
  patcher.clearError();

@@ -14,6 +14,12 @@
 // outputs. Clearing the count of that one list makes AppleGVA use its non-VPHAL
 // path instead of the media-object stream that stalls RCS on streamed video
 // (b00t0x/WhateverXe#81).
+// XFER: the same driver lists NV12/BGRA/yuvs... pixel-transfer outputs for its two
+// video-processing contexts (0x200 and 0x800) that AppleGVA creates for scaling and
+// colour conversion. Creating one dereferences a render component the driver never
+// allocates (VA +0x1336f3, NULL+8), crashing WindowServer, QuickTime and
+// mediaanalysisd (b00t0x/WhateverXe#23). Clearing both output counts makes AppleGVA
+// use its software path, as it does when the driver is absent.
 // MTL: -[MTLIGAccelCommandBuffer dealloc] skips deleting the command buffer's
 // private POSH buffer when it was the queue's only active one, leaking 76 KB per
 // command buffer (b00t0x/WhateverXe#47).
@@ -22,7 +28,7 @@
 namespace TGLPageFix {
 
 constexpr size_t PageSize = 4096;
-enum Kind { None = -1, VA = 0, MTL = 1, KindCount = 2 };
+enum Kind { None = -1, VA = 0, MTL = 1, XFER = 2, KindCount = 3 };
 
 constexpr uint64_t VAOffset = 0x786000;
 constexpr unsigned VACount = 0xfc4;
@@ -31,6 +37,15 @@ constexpr uint32_t VACountValue = 2;
 constexpr uint8_t VADigest[32] {
 	0x2a, 0x1a, 0x24, 0x00, 0xbb, 0x67, 0x29, 0xc4, 0xac, 0x13, 0x33, 0x78, 0x64, 0x3d, 0x46, 0x9c,
 	0x88, 0xcc, 0xbe, 0x2c, 0x84, 0xe8, 0xc1, 0x6e, 0x13, 0x35, 0x18, 0x16, 0xb6, 0xd0, 0xff, 0x2a
+};
+
+constexpr uint64_t XferOffset = 0x787000;
+constexpr unsigned XferCount200 = 0x824; // Output count of the 0x200 context list.
+constexpr unsigned XferCount800 = 0xc54; // Output count of the 0x800 context list.
+constexpr uint32_t XferCountValue = 8;
+constexpr uint8_t XferDigest[32] {
+	0x12, 0x37, 0x78, 0x72, 0xd5, 0x5b, 0xdc, 0xb5, 0x25, 0xa6, 0xb6, 0xbe, 0x6b, 0x0d, 0xb9, 0xd7,
+	0xbf, 0xe2, 0xf5, 0x02, 0xe5, 0x28, 0xf9, 0x0c, 0x57, 0xf4, 0xb9, 0xe9, 0xab, 0xed, 0xc9, 0x04
 };
 
 constexpr uint64_t MTLOffset = 0x7e000;
@@ -99,6 +114,12 @@ inline Kind classify(const void *data, size_t size, uint64_t offset) {
 		memcpy(&count, page + VACount, sizeof(count));
 		return count == VACountValue && !memcmp(page + VAFormat, "yuv2", 4) && digestIs(page, VADigest) ? VA : None;
 	}
+	if (offset == XferOffset) {
+		uint32_t a, b;
+		memcpy(&a, page + XferCount200, sizeof(a));
+		memcpy(&b, page + XferCount800, sizeof(b));
+		return a == XferCountValue && b == XferCountValue && digestIs(page, XferDigest) ? XFER : None;
+	}
 	if (offset == MTLOffset)
 		return page[MTLJump] == 0x75 && page[MTLJump + 1] == 0x0d && digestIs(page, MTLDigest) ? MTL : None;
 	return None;
@@ -108,6 +129,9 @@ inline void apply(Kind kind, void *data) {
 	auto page = static_cast<uint8_t *>(data);
 	if (kind == VA) {
 		memset(page + VACount, 0, sizeof(uint32_t));
+	} else if (kind == XFER) {
+		memset(page + XferCount200, 0, sizeof(uint32_t));
+		memset(page + XferCount800, 0, sizeof(uint32_t));
 	} else if (kind == MTL) {
 		page[MTLJump] = 0x90;
 		page[MTLJump + 1] = 0x90;

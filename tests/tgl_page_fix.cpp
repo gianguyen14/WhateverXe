@@ -46,6 +46,30 @@ static void checkDriver(const char *path, uint64_t offset, Kind kind, unsigned c
 	assert(classify(tampered.data(), PageSize, offset) == None);
 }
 
+// Two separate counts, so the generic one-range check does not fit.
+static void checkXfer() {
+	std::vector<uint8_t> page;
+	if (!readPage(VAPath, XferOffset, page)) return;
+	if (classify(page.data(), PageSize, XferOffset) != XFER) {
+		puts("different driver build, xfer fix inert");
+		return;
+	}
+	assert(classify(page.data(), PageSize, XferOffset + PageSize) == None);
+	auto original = page;
+	apply(XFER, page.data());
+	size_t changed = 0;
+	for (size_t i = 0; i < PageSize; i++) {
+		if (page[i] == original[i]) continue;
+		assert(i == XferCount200 || i == XferCount800);
+		changed++;
+	}
+	assert(changed == 2); // Each count has one non-zero byte.
+	assert(classify(page.data(), PageSize, XferOffset) == None);
+	auto tampered = original;
+	tampered[7] ^= 1;
+	assert(classify(tampered.data(), PageSize, XferOffset) == None);
+}
+
 int main() {
 	// SHA-256 of a zero page.
 	static const uint8_t zero[32] {0xad, 0x7f, 0xac, 0xb2, 0x58, 0x6f, 0xc6, 0xe9, 0x66, 0xc0, 0x04, 0xd7, 0xd1, 0xd1, 0x6b, 0x02,
@@ -58,6 +82,7 @@ int main() {
 	assert(classify(blank.data(), PageSize, 0) == None);
 	checkDriver(VAPath, VAOffset, VA, VACount, 4);
 	checkDriver(MTLPath, MTLOffset, MTL, MTLJump, 2);
+	checkXfer();
 	puts("tgl_page_fix ok");
 	return 0;
 }

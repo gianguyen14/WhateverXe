@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- Add opt-in page fixes for Tiger Lake `9A49` on Sequoia, applied in memory after code-signing validation so the bundles stay untouched. `-wexvafix` stops streamed video from stalling the render engine (#81), `-wexleakfix` stops the Metal driver leaking 76 KB per command buffer (#47), and `-wexvaprobe` only counts the matching pages.
+- Add opt-in page fixes for Tiger Lake `9A49` on Sequoia, applied in memory after code-signing validation so the bundles stay untouched. `-wexvafix` stops streamed video from stalling the render engine (#81) and stops pixel transfers (scaling, colour conversion) from crashing the VA driver at +0x1336f3 (#23), `-wexleakfix` stops the Metal driver leaking 76 KB per command buffer (#47), and `-wexvaprobe` only counts the matching pages.
 
 ### Changed
 
