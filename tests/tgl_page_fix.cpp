@@ -175,6 +175,61 @@ static void checkGVAAssert() {
 		if (cache[j] != before[j]) assert(j == w.at + at);
 }
 
+// The two `jne` instructions in AVFPixelProcessCore_PrepareToTransferImages that jumped to
+// assert(0) now jump to the function's own error return.
+static void checkGVAConfigure() {
+	const auto &w = GVAConfigureWindow;
+	assert(w.at + w.length <= PageSize && w.length == sizeof(GVAConfigureFrom) && w.length == sizeof(GVAConfigureTo));
+	std::vector<size_t> diff;
+	for (size_t i = 0; i < w.length; i++)
+		if (w.from[i] != w.to[i]) diff.push_back(i);
+	assert(diff.size() == 3);
+	// jne rel32 at +10 (0f 85): the displacement shrinks, the opcode does not change.
+	assert(w.from[10] == 0x0f && w.from[11] == 0x85 && w.to[10] == 0x0f && w.to[11] == 0x85);
+	assert(diff[0] == 12 && diff[1] == 13);
+	// jne rel8 (75) at +241: only its displacement changes, backwards.
+	assert(w.from[241] == 0x75 && w.to[241] == 0x75 && diff[2] == 242 && (int8_t)w.to[242] < 0);
+	// Both new targets land on the same instruction: movl $0xffffd43c, %r14d (41 be 3c d4 ff ff).
+	const int64_t t1 = int64_t(w.at) + 10 + 6 + int32_t(uint32_t(w.to[12]) | uint32_t(w.to[13]) << 8 | uint32_t(w.to[14]) << 16 | uint32_t(w.to[15]) << 24);
+	const int64_t t2 = int64_t(w.at) + 241 + 2 + int8_t(w.to[242]);
+	assert(t1 == t2);
+	assert(t1 >= int64_t(w.at) && t1 + 6 <= int64_t(w.at + w.length));
+	const auto *target = w.from + (t1 - w.at);
+	assert(target[0] == 0x41 && target[1] == 0xbe && target[2] == 0x3c && target[3] == 0xd4 && target[4] == 0xff && target[5] == 0xff);
+	std::vector<uint8_t> page(PageSize, 0xcc);
+	memcpy(page.data() + w.at, w.from, w.length);
+	assert(classify(page.data(), PageSize, w.pageOffset) == GVAConfigure);
+	assert(classify(page.data(), PageSize, w.pageOffset + PageSize) == None);
+	assert(classify(page.data(), PageSize - 1, w.pageOffset) == None);
+	auto original = page;
+	apply(GVAConfigure, page.data());
+	size_t changed = 0;
+	for (size_t j = 0; j < PageSize; j++) {
+		if (page[j] == original[j]) continue;
+		assert(j == w.at + diff[0] || j == w.at + diff[1] || j == w.at + diff[2]);
+		changed++;
+	}
+	assert(changed == 3);
+	assert(classify(page.data(), PageSize, w.pageOffset) == None);
+	for (unsigned b : {0u, w.length / 2, w.length - 1}) {
+		auto tampered = original;
+		tampered[w.at + b] ^= 1;
+		assert(classify(tampered.data(), PageSize, w.pageOffset) == None);
+	}
+	assert(w.pageOffset != GVAAssertWindow.pageOffset && w.pageOffset != VAOffset && w.pageOffset != XferOffset && w.pageOffset != MTLOffset);
+	for (const auto &g : NullGuardWindows) assert(w.pageOffset != g.pageOffset);
+	std::vector<uint8_t> cache;
+	if (!readPage(CachePath, w.pageOffset, cache)) return;
+	if (classify(cache.data(), PageSize, w.pageOffset) != GVAConfigure) {
+		puts("different dyld cache build (or already patched), gva configure fix inert");
+		return;
+	}
+	auto before = cache;
+	apply(GVAConfigure, cache.data());
+	for (size_t j = 0; j < PageSize; j++)
+		if (cache[j] != before[j]) assert(j == w.at + diff[0] || j == w.at + diff[1] || j == w.at + diff[2]);
+}
+
 int main() {
 	// SHA-256 of a zero page.
 	static const uint8_t zero[32] {0xad, 0x7f, 0xac, 0xb2, 0x58, 0x6f, 0xc6, 0xe9, 0x66, 0xc0, 0x04, 0xd7, 0xd1, 0xd1, 0x6b, 0x02,
@@ -190,6 +245,7 @@ int main() {
 	checkXfer();
 	checkNullGuard();
 	checkGVAAssert();
+	checkGVAConfigure();
 	puts("tgl_page_fix ok");
 	return 0;
 }
