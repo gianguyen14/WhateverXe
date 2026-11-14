@@ -49,7 +49,7 @@ void validatePage(vnode_t vnode,memory_object_t pager,memory_object_offset_t off
  MachInfo::setKernelWriting(false,KernelPatcher::kernelWriteLock);
 }
 bool pageFixSerialize(void *,void *,OSSerialize *serializer) {
- const uint64_t q[] {4,pageFixReady,pageFixEnabled[TGLPageFix::VA],pageFixEnabled[TGLPageFix::MTL],
+ const uint64_t q[] {5,pageFixReady,pageFixEnabled[TGLPageFix::VA],pageFixEnabled[TGLPageFix::MTL],
   __atomic_load_n(&pageFixSeen[TGLPageFix::VA],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::VA],__ATOMIC_RELAXED),
   __atomic_load_n(&pageFixSeen[TGLPageFix::MTL],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::MTL],__ATOMIC_RELAXED),
   __atomic_load_n(&pageFixSeen[TGLPageFix::XFER],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::XFER],__ATOMIC_RELAXED),
@@ -59,7 +59,10 @@ bool pageFixSerialize(void *,void *,OSSerialize *serializer) {
   __atomic_load_n(&pageFixSeen[TGLPageFix::NullGuardPrepare],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::NullGuardPrepare],__ATOMIC_RELAXED),
   __atomic_load_n(&pageFixSeen[TGLPageFix::NullGuardRender],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::NullGuardRender],__ATOMIC_RELAXED),
   // Schema 4 appends the Metal pages held back because -wexnoposh was not active.
-  __atomic_load_n(&pageFixGated,__ATOMIC_RELAXED)};
+  __atomic_load_n(&pageFixGated,__ATOMIC_RELAXED),
+  // Schema 5 appends the AppleGVACore assert fix (dyld shared cache): enabled, seen, patched.
+  pageFixEnabled[TGLPageFix::GVAAssert],
+  __atomic_load_n(&pageFixSeen[TGLPageFix::GVAAssert],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::GVAAssert],__ATOMIC_RELAXED)};
  auto data=OSData::withBytes(q,sizeof(q));if(!data)return false;
  const bool ok=data->serialize(serializer);data->release();return ok;
 }
@@ -70,10 +73,12 @@ void preparePageFix(KernelPatcher &patcher,IOPCIDevice *gpu,const XELP::Profile 
  const bool probe=checkKernelArgument("-wexvaprobe");
  const bool fixVA=!probe && checkKernelArgument("-wexvafix"),fixMTL=!probe && checkKernelArgument("-wexleakfix");
  const bool guard=!probe && checkKernelArgument("-wexnullguard");
- if(!probe && !fixVA && !fixMTL && !guard)return;
+ const bool gvaAssert=!probe && checkKernelArgument("-wexgvanoassert");
+ if(!probe && !fixVA && !fixMTL && !guard && !gvaAssert)return;
  if(!gpu || getKernelVersion()!=KernelVersion::Sequoia || profile.overridden() || !XELP::same(profile,XELP::identify(0x9A498086,0x1)))return;
  pageFixEnabled[TGLPageFix::VA]=fixVA;pageFixEnabled[TGLPageFix::XFER]=fixVA && !guard;pageFixEnabled[TGLPageFix::MTL]=fixMTL;
  pageFixEnabled[TGLPageFix::NullGuardStatus]=pageFixEnabled[TGLPageFix::NullGuardPrepare]=pageFixEnabled[TGLPageFix::NullGuardRender]=guard;
+ pageFixEnabled[TGLPageFix::GVAAssert]=gvaAssert;
  KernelPatcher::RouteRequest route {"_cs_validate_page",validatePage,orgValidatePage};
  pageFixReady=patcher.routeMultipleLong(KernelPatcher::KernelID,&route,1);
  patcher.clearError();

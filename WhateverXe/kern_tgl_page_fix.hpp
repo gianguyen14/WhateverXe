@@ -39,12 +39,25 @@
 // needs it (420v and BGRA scaling or conversion, 8 of the 12 cases) returns status 0
 // with the output untouched ("Error scheduling command"), where XFER produces correct
 // frames in software. Use it only to try the hardware encoder, never as the daily fix.
+// GVAASSERT: the fix for the WindowServer crash when AppleGVA cannot build a video
+// pipeline (2026-11-15, AirPlay mirroring: "Assertion failed: (assertOnError == false),
+// function createPipeline8bit, file branch_PP0.cpp, line 358"). AppleGVACore lives in
+// the dyld shared cache, not in /Library/GPUBundles. Flow_PP0 keeps a byte at +0x349
+// that kAVF_PP0_IOServiceInfo sets to 1 (setParam, VMA 0x7ffa0635e99a in 24H32), and
+// every other use only reads it: it is passed as assertOnError to createPipeline8bit,
+// createPipeline10bit and createPipeline, and tested before Flow_PP0::pushMetaData's
+// own asserts. With it set a failing pipeline (which -wexvafix makes certain for the
+// 420v -> BGRA scaler that WindowServer asks for) aborts WindowServer; with it clear
+// the same code returns the error and the caller falls back. The fix stores 0 instead
+// of 1 in that one instruction (1 byte). Matched by one exact window at a pinned file
+// offset of dyld_shared_cache_x86_64h.02 (macOS 15.8.1, 24H32), so it is inert on any
+// other cache build.
 // Pages are matched by file offset, fields and a full SHA-256, once the kernel
 // has validated them, so the signed bundles stay untouched.
 namespace TGLPageFix {
 
 constexpr size_t PageSize = 4096;
-enum Kind { None = -1, VA = 0, MTL = 1, XFER = 2, NullGuardStatus = 3, NullGuardPrepare = 4, NullGuardRender = 5, KindCount = 6 };
+enum Kind { None = -1, VA = 0, MTL = 1, XFER = 2, NullGuardStatus = 3, NullGuardPrepare = 4, NullGuardRender = 5, GVAAssert = 6, KindCount = 7 };
 
 constexpr uint64_t VAOffset = 0x786000;
 constexpr unsigned VACount = 0xfc4;
@@ -126,6 +139,19 @@ constexpr Window NullGuardWindows[3] {
 };
 constexpr Kind NullGuardKinds[3] {NullGuardStatus, NullGuardPrepare, NullGuardRender};
 
+// The one-byte AppleGVACore fix: `movb $1, 0x349(%r15)` becomes `movb $0, 0x349(%r15)`.
+constexpr uint8_t GVAAssertFrom[40] {
+	0x1b, 0x00, 0x00, 0x00, 0x44, 0x89, 0xf1, 0x45, 0x31, 0xc0, 0x31, 0xc0, 0xe8, 0x77, 0xd9, 0x00,
+	0x00, 0x44, 0x89, 0x35, 0x96, 0xfe, 0xa0, 0x3c, 0x41, 0xc6, 0x87, 0x49, 0x03, 0x00, 0x00, 0x01,
+	0x48, 0x89, 0xdf, 0xe8, 0x86, 0xf6, 0xff, 0xff
+};
+constexpr uint8_t GVAAssertTo[40] {
+	0x1b, 0x00, 0x00, 0x00, 0x44, 0x89, 0xf1, 0x45, 0x31, 0xc0, 0x31, 0xc0, 0xe8, 0x77, 0xd9, 0x00,
+	0x00, 0x44, 0x89, 0x35, 0x96, 0xfe, 0xa0, 0x3c, 0x41, 0xc6, 0x87, 0x49, 0x03, 0x00, 0x00, 0x00,
+	0x48, 0x89, 0xdf, 0xe8, 0x86, 0xf6, 0xff, 0xff
+};
+constexpr Window GVAAssertWindow {0x635e000, 0x982, sizeof(GVAAssertFrom), GVAAssertFrom, GVAAssertTo};
+
 inline uint32_t rotate(uint32_t x, unsigned n) { return (x >> n) | (x << (32 - n)); }
 
 inline void block(uint32_t state[8], const uint8_t *p) {
@@ -196,6 +222,8 @@ inline Kind classify(const void *data, size_t size, uint64_t offset) {
 		if (offset == w.pageOffset)
 			return !memcmp(page + w.at, w.from, w.length) ? NullGuardKinds[i] : None;
 	}
+	if (offset == GVAAssertWindow.pageOffset)
+		return !memcmp(page + GVAAssertWindow.at, GVAAssertWindow.from, GVAAssertWindow.length) ? GVAAssert : None;
 	if (offset == MTLOffset)
 		return page[MTLJump] == 0x75 && page[MTLJump + 1] == 0x0d && digestIs(page, MTLDigest) ? MTL : None;
 	return None;
@@ -211,6 +239,8 @@ inline void apply(Kind kind, void *data) {
 	} else if (kind == MTL) {
 		page[MTLJump] = 0x90;
 		page[MTLJump + 1] = 0x90;
+	} else if (kind == GVAAssert) {
+		memcpy(page + GVAAssertWindow.at, GVAAssertWindow.to, GVAAssertWindow.length);
 	} else if (kind >= NullGuardStatus && kind <= NullGuardRender) {
 		const auto &w = NullGuardWindows[kind - NullGuardStatus];
 		memcpy(page + w.at, w.to, w.length);

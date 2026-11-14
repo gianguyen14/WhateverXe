@@ -12,6 +12,9 @@ using namespace TGLPageFix;
 // already patched, so on a machine with the fixes enabled point WEX_VA_DRIVER and
 // WEX_MTL_DRIVER at the driver files of the Graphics package instead.
 static const char *VAPath = getenv("WEX_VA_DRIVER") ? getenv("WEX_VA_DRIVER") : "/Library/GPUBundles/AppleIntelTGLGraphicsVADriver.bundle/Contents/MacOS/AppleIntelTGLGraphicsVADriver";
+// The dyld shared cache sub-file that holds AppleGVACore. As with the drivers, reading the
+// installed file on a machine with -wexgvanoassert may return the patched page.
+static const char *CachePath = getenv("WEX_DYLD_CACHE_02") ? getenv("WEX_DYLD_CACHE_02") : "/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_x86_64h.02";
 static const char *MTLPath = getenv("WEX_MTL_DRIVER") ? getenv("WEX_MTL_DRIVER") : "/Library/GPUBundles/AppleIntelTGLGraphicsMTLDriver.bundle/Contents/MacOS/AppleIntelTGLGraphicsMTLDriver";
 
 static bool readPage(const char *path, uint64_t offset, std::vector<uint8_t> &page) {
@@ -119,6 +122,59 @@ static void checkNullGuard() {
 	       NullGuardWindows[1].pageOffset != NullGuardWindows[2].pageOffset);
 }
 
+// One byte of AppleGVACore: Flow_PP0's +0x349 flag is stored as 0 instead of 1.
+static void checkGVAAssert() {
+	const auto &w = GVAAssertWindow;
+	assert(w.at + w.length <= PageSize);
+	assert(w.length == sizeof(GVAAssertFrom) && w.length == sizeof(GVAAssertTo));
+	size_t differing = 0, at = 0;
+	for (size_t i = 0; i < w.length; i++)
+		if (w.from[i] != w.to[i]) { differing++; at = i; }
+	assert(differing == 1 && w.from[at] == 1 && w.to[at] == 0); // Exactly the immediate 1 -> 0.
+	assert(w.from[at - 7] == 0x41 && w.from[at - 6] == 0xc6 && w.from[at - 5] == 0x87); // movb $imm8, disp32(%r15)
+	assert(w.from[at - 4] == 0x49 && w.from[at - 3] == 0x03 && w.from[at - 2] == 0 && w.from[at - 1] == 0); // +0x349
+	std::vector<uint8_t> page(PageSize, 0xcc);
+	memcpy(page.data() + w.at, w.from, w.length);
+	assert(classify(page.data(), PageSize, w.pageOffset) == GVAAssert);
+	assert(classify(page.data(), PageSize, w.pageOffset + PageSize) == None);
+	assert(classify(page.data(), PageSize, w.pageOffset - PageSize) == None);
+	assert(classify(page.data(), PageSize - 1, w.pageOffset) == None);
+	auto original = page;
+	apply(GVAAssert, page.data());
+	size_t changed = 0;
+	for (size_t j = 0; j < PageSize; j++) {
+		if (page[j] == original[j]) continue;
+		assert(j == w.at + at);
+		changed++;
+	}
+	assert(changed == 1);
+	assert(classify(page.data(), PageSize, w.pageOffset) == None); // A patched page never matches again.
+	for (unsigned b : {0u, w.length / 2, w.length - 1}) {
+		auto tampered = original;
+		tampered[w.at + b] ^= 1;
+		assert(classify(tampered.data(), PageSize, w.pageOffset) == None);
+	}
+	std::vector<uint8_t> blank(PageSize);
+	assert(classify(blank.data(), PageSize, w.pageOffset) == None);
+	// Distinct from every other fix's page.
+	assert(w.pageOffset != VAOffset && w.pageOffset != XferOffset && w.pageOffset != MTLOffset);
+	for (const auto &g : NullGuardWindows) assert(w.pageOffset != g.pageOffset);
+	std::vector<uint8_t> cache;
+	if (!readPage(CachePath, w.pageOffset, cache)) {
+		puts("dyld shared cache not readable, gva assert fix not checked on it");
+		return;
+	}
+	const auto kind = classify(cache.data(), PageSize, w.pageOffset);
+	if (kind != GVAAssert) {
+		puts("different dyld cache build (or already patched), gva assert fix inert");
+		return;
+	}
+	auto before = cache;
+	apply(GVAAssert, cache.data());
+	for (size_t j = 0; j < PageSize; j++)
+		if (cache[j] != before[j]) assert(j == w.at + at);
+}
+
 int main() {
 	// SHA-256 of a zero page.
 	static const uint8_t zero[32] {0xad, 0x7f, 0xac, 0xb2, 0x58, 0x6f, 0xc6, 0xe9, 0x66, 0xc0, 0x04, 0xd7, 0xd1, 0xd1, 0x6b, 0x02,
@@ -133,6 +189,7 @@ int main() {
 	checkDriver(MTLPath, MTLOffset, MTL, MTLJump, 2);
 	checkXfer();
 	checkNullGuard();
+	checkGVAAssert();
 	puts("tgl_page_fix ok");
 	return 0;
 }
