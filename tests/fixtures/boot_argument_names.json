@@ -155,5 +155,6 @@
   "-wexrpsmax": [],
   "-wexvafix": [],
   "-wexvaprobe": [],
-  "-wexteardownfix": []
+  "-wexteardownfix": [],
+  "-wexnullguard": []
 }

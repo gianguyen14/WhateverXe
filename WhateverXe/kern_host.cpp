@@ -39,20 +39,29 @@ void validatePage(vnode_t vnode,memory_object_t pager,memory_object_offset_t off
  MachInfo::setKernelWriting(false,KernelPatcher::kernelWriteLock);
 }
 bool pageFixSerialize(void *,void *,OSSerialize *serializer) {
- const uint64_t q[] {2,pageFixReady,pageFixEnabled[TGLPageFix::VA],pageFixEnabled[TGLPageFix::MTL],
+ const uint64_t q[] {3,pageFixReady,pageFixEnabled[TGLPageFix::VA],pageFixEnabled[TGLPageFix::MTL],
   __atomic_load_n(&pageFixSeen[TGLPageFix::VA],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::VA],__ATOMIC_RELAXED),
   __atomic_load_n(&pageFixSeen[TGLPageFix::MTL],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::MTL],__ATOMIC_RELAXED),
-  __atomic_load_n(&pageFixSeen[TGLPageFix::XFER],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::XFER],__ATOMIC_RELAXED)};
+  __atomic_load_n(&pageFixSeen[TGLPageFix::XFER],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::XFER],__ATOMIC_RELAXED),
+  // Schema 3 appends the null guard: enabled, then seen and patched for its three windows.
+  pageFixEnabled[TGLPageFix::NullGuardStatus],
+  __atomic_load_n(&pageFixSeen[TGLPageFix::NullGuardStatus],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::NullGuardStatus],__ATOMIC_RELAXED),
+  __atomic_load_n(&pageFixSeen[TGLPageFix::NullGuardPrepare],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::NullGuardPrepare],__ATOMIC_RELAXED),
+  __atomic_load_n(&pageFixSeen[TGLPageFix::NullGuardRender],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::NullGuardRender],__ATOMIC_RELAXED)};
  auto data=OSData::withBytes(q,sizeof(q));if(!data)return false;
  const bool ok=data->serialize(serializer);data->release();return ok;
 }
-// -wexvaprobe only counts matching pages; it wins over the two fixes.
+// -wexvaprobe only counts matching pages; it wins over the fixes. -wexnullguard
+// replaces the pixel-transfer part of -wexvafix (XFER), which would otherwise make
+// every scaler context fail again.
 void preparePageFix(KernelPatcher &patcher,IOPCIDevice *gpu,const XELP::Profile &profile) {
  const bool probe=checkKernelArgument("-wexvaprobe");
  const bool fixVA=!probe && checkKernelArgument("-wexvafix"),fixMTL=!probe && checkKernelArgument("-wexleakfix");
- if(!probe && !fixVA && !fixMTL)return;
+ const bool guard=!probe && checkKernelArgument("-wexnullguard");
+ if(!probe && !fixVA && !fixMTL && !guard)return;
  if(!gpu || getKernelVersion()!=KernelVersion::Sequoia || profile.overridden() || !XELP::same(profile,XELP::identify(0x9A498086,0x1)))return;
- pageFixEnabled[TGLPageFix::VA]=fixVA;pageFixEnabled[TGLPageFix::XFER]=fixVA;pageFixEnabled[TGLPageFix::MTL]=fixMTL;
+ pageFixEnabled[TGLPageFix::VA]=fixVA;pageFixEnabled[TGLPageFix::XFER]=fixVA && !guard;pageFixEnabled[TGLPageFix::MTL]=fixMTL;
+ pageFixEnabled[TGLPageFix::NullGuardStatus]=pageFixEnabled[TGLPageFix::NullGuardPrepare]=pageFixEnabled[TGLPageFix::NullGuardRender]=guard;
  KernelPatcher::RouteRequest route {"_cs_validate_page",validatePage,orgValidatePage};
  pageFixReady=patcher.routeMultipleLong(KernelPatcher::KernelID,&route,1);
  patcher.clearError();
