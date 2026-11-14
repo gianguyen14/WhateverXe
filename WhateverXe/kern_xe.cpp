@@ -51,6 +51,7 @@
 #include "kern_tgl_fb_binding.hpp"
 #include "kern_display13_fb_irq.hpp"
 #include "kern_display13_cursor.hpp"
+#include "kern_tgl_context_teardown.hpp"
 #include "kern_display13_dbuf.hpp"
 #include "kern_display13_wm.hpp"
 #include "kern_tgl_training_scope.hpp"
@@ -329,6 +330,36 @@ void XE::wrapTGLRecovery(void *channel) {
 		__atomic_store_n(&q[15],1,__ATOMIC_RELEASE);
 	}
 	__atomic_fetch_add(&tglRecoveryReturns,1,__ATOMIC_RELEASE);
+}
+
+namespace {
+TGLContextTeardown::Counters tglTeardownCounters {};
+// Counters go on the IGPU, beside TGLPageFixLive, so they stay readable without -wexdiag.
+IORegistryEntry *tglTeardownGPU {};
+bool tglTeardownSerialize(void *,void *,OSSerialize *serializer) {
+	const auto &c=tglTeardownCounters;
+	uint32_t data[7] {62};
+	data[1]=__atomic_load_n(&c.contextFrees,__ATOMIC_RELAXED);
+	data[2]=__atomic_load_n(&c.contextWaits,__ATOMIC_RELAXED);
+	data[3]=__atomic_load_n(&c.contextDrained,__ATOMIC_RELAXED);
+	data[4]=__atomic_load_n(&c.taskFrees,__ATOMIC_RELAXED);
+	data[5]=__atomic_load_n(&c.taskWaits,__ATOMIC_RELAXED);
+	data[6]=__atomic_load_n(&c.taskDrained,__ATOMIC_RELAXED);
+	auto out=OSData::withBytes(data,sizeof(data));if (!out) return false;
+	const bool ok=out->serialize(serializer);out->release();return ok;
+}
+}
+
+void XE::wrapTGLContextFree(void *context) {
+	using namespace TGLContextTeardown;
+	drainContext(context,scheduler(context,ContextOwner),tglTeardownCounters);
+	FunctionCast(wrapTGLContextFree,callbackXE->orgTGLContextFree)(context);
+}
+
+void XE::wrapTGLTaskFree(void *task) {
+	using namespace TGLContextTeardown;
+	drainTask(task,scheduler(task,TaskOwner),tglTeardownCounters);
+	FunctionCast(wrapTGLTaskFree,callbackXE->orgTGLTaskFree)(task);
 }
 
 extern "C" {
@@ -4356,6 +4387,7 @@ bool XE::xelpInstallHostRPS(KernelPatcher &patcher,size_t index,mach_vm_address_
 void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
 	// This must precede tglLoadHDMIWiring, tglPrepareMMIOUC and TGL FIA reads.
 	auto physicalGPU = OSDynamicCast(IOPCIDevice, info->videoBuiltin);
+	tglTeardownGPU = physicalGPU;
 	selectProfile(XELP::deviceProfile(physicalGPU));
     // ADLP_LOAD_ONLY_KERNEL: do not enter TGL MMIO/FIA, bootstrap or VM setup.
     const auto physicalEntry=XELP::deviceEntry(xeProfile.identity);
@@ -11964,6 +11996,33 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			}
 			wexDiagRoot()->setProperty("TGLRecoverySinglePassRequested",recoveryRequested);
 			wexDiagRoot()->setProperty("TGLRecoverySinglePassReady",recoveryRequested && recoveryOK);
+			// b00t0x/WhateverXe#62: drain post-sync writes before a context or task
+			// is freed; see kern_tgl_context_teardown.hpp. Opt-in, exact build only.
+			const bool teardownRequested=checkKernelArgument("-wexteardownfix");
+			bool teardownOK=false;
+			if (teardownRequested) {
+				using namespace TGLContextTeardown;
+				const char *contextFree="__ZN17IGHardwareContext4freeEv",*taskFree="__ZN11IGAccelTask4freeEv";
+				teardownOK=hostOK && size>MinimumSize &&
+					patcher.solveSymbol<mach_vm_address_t>(index,contextFree,address,size)==address+ContextFree &&
+					patcher.solveSymbol<mach_vm_address_t>(index,taskFree,address,size)==address+TaskFree &&
+					!memcmp(reinterpret_cast<void *>(address+ContextFree),ContextFreeHead,sizeof(ContextFreeHead)) &&
+					!memcmp(reinterpret_cast<void *>(address+TaskFree),TaskFreeHead,sizeof(TaskFreeHead));
+				patcher.clearError();
+				if (teardownOK) {
+					KernelPatcher::RouteRequest hooks[] {
+						{contextFree,wrapTGLContextFree,orgTGLContextFree},
+						{taskFree,wrapTGLTaskFree,orgTGLTaskFree}
+					};
+					teardownOK=patcher.routeMultiple(index,hooks,arrsize(hooks),address,size);
+				}
+				patcher.clearError();
+				if (teardownOK) if (auto live=OSSerializer::forTarget(nullptr,tglTeardownSerialize)) {
+					(tglTeardownGPU ? tglTeardownGPU : wexDiagRoot())->setProperty("TGLTeardownDrainLive",live);live->release();
+				}
+				SYSLOG("igfx","TGL teardown drain %s (-wexteardownfix)",teardownOK?"active":"not applied");
+			}
+			wexDiagRoot()->setProperty("TGLTeardownDrainReady",teardownRequested && teardownOK);
 			tglAcceleratorReady = surfaceABIReady && adlnObserved && skuReady && urbReady && ccsReady && hizReady && ccsPSReady && ggttOK && observed && ok && gucOK && dmaWriteOK && hostOK && scratchOK && blitInitOK && tglMMIOUCReady && copyOK && auxAlignOK && iosCCSOK && ffModeOK && cpsOK && flushOK && tlbPreparserOK && semaphoreTLBOK && hangOK && recoveryOK && completionCacheOK && contextCacheOK;
 			// r201: resource/copy diagnostics are absent, not admission requirements.
 			wexDiagRoot()->setProperty("TGLResourceDiagnosticsRemoved",true);
