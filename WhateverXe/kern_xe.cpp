@@ -52,6 +52,7 @@
 #include "kern_display13_fb_irq.hpp"
 #include "kern_display13_cursor.hpp"
 #include "kern_tgl_context_teardown.hpp"
+#include "kern_tgl_noposh.hpp"
 #include "kern_display13_dbuf.hpp"
 #include "kern_display13_wm.hpp"
 #include "kern_tgl_training_scope.hpp"
@@ -335,7 +336,7 @@ void XE::wrapTGLRecovery(void *channel) {
 namespace {
 TGLContextTeardown::Counters tglTeardownCounters {};
 // Counters go on the IGPU, beside TGLPageFixLive, so they stay readable without -wexdiag.
-IORegistryEntry *tglTeardownGPU {};
+IORegistryEntry *tglLiveGPU {};
 bool tglTeardownSerialize(void *,void *,OSSerialize *serializer) {
 	const auto &c=tglTeardownCounters;
 	uint32_t data[7] {62};
@@ -520,9 +521,45 @@ static bool tglCPSRestorePointer(void *context,uintptr_t caller) {
  __atomic_fetch_add(&tglCPSCounts[15],1,__ATOMIC_RELAXED);
  return true;
 }
+// -wexnoposh (kern_tgl_noposh.hpp). Enabled only after every native site below
+// was qualified. The POSH flag is cleared before the native copy so the POCS
+// image is never restored, then each successful copy (initWithOptions AND
+// beginReset) gets the non-POSH CTX_CTRL and a zero POSH_LRCA. A reset
+// otherwise restores the safe image's POSH control bit and POSH_LRCA, the
+// released startup context's POCS image, into every RCS context it replays.
+// Not static: kern_host.cpp holds the Metal command-buffer fix until this is set.
+bool tglNoPOSHEnabled {};
+uint32_t tglNoPOSHCounts[TGLNoPOSH::Slots] {};
+static void tglNoPOSHAfterRestore(void *context,bool initCaller) {
+ auto c=static_cast<uint8_t *>(context);
+ if(!c || c[TGLNoPOSH::EngineOffset]!=0 || (c[TGLNoPOSH::FlagsOffset]&TGLNoPOSH::POSHFlag))return;
+ auto buffer=*reinterpret_cast<uint8_t **>(c+0x98);
+ if(!buffer || !tglCPSCPUAddress)return;
+ auto image=reinterpret_cast<uint8_t *(*)(void *)>(tglCPSCPUAddress)(buffer);
+ const auto result=TGLNoPOSH::sanitize(image,*reinterpret_cast<uint64_t *>(buffer+0x20));
+ if(result&TGLNoPOSH::Mismatch) {__atomic_fetch_add(&tglNoPOSHCounts[TGLNoPOSH::LayoutMismatch],1,__ATOMIC_RELAXED);return;}
+ if(result&TGLNoPOSH::ZeroedLRCA)__atomic_fetch_add(&tglNoPOSHCounts[TGLNoPOSH::LRCAZeroed],1,__ATOMIC_RELAXED);
+ if(result&TGLNoPOSH::ClearedControl)__atomic_fetch_add(&tglNoPOSHCounts[TGLNoPOSH::ControlCleared],1,__ATOMIC_RELAXED);
+ // Same publication rule as tglCPSRestorePointer: lines 0x1000 and 0x10C0.
+ asm volatile("clflush (%0)"::"r"(image+TGLNoPOSH::ControlOffset):"memory");
+ asm volatile("clflush (%0)"::"r"(image+TGLNoPOSH::LRCAOffset):"memory");
+ asm volatile("mfence":::"memory");
+ __atomic_fetch_add(&tglNoPOSHCounts[initCaller?TGLNoPOSH::InitSanitized:TGLNoPOSH::ResetSanitized],1,__ATOMIC_RELAXED);
+}
 bool tglCPSRestore(void *context) {
  const auto caller=reinterpret_cast<uintptr_t>(__builtin_return_address(0));
+ const bool noPOSH=__atomic_load_n(&tglNoPOSHEnabled,__ATOMIC_ACQUIRE) && context &&
+  static_cast<uint8_t *>(context)[TGLNoPOSH::EngineOffset]==0;
+ if(noPOSH) {
+  __atomic_fetch_add(&tglNoPOSHCounts[TGLNoPOSH::Calls],1,__ATOMIC_RELAXED);
+  if(TGLNoPOSH::clearFlag(static_cast<uint8_t *>(context)))
+   __atomic_fetch_add(&tglNoPOSHCounts[TGLNoPOSH::FlagCleared],1,__ATOMIC_RELAXED);
+ }
  const bool result=FunctionCast(tglCPSRestore,tglCPSRestoreOriginal)(context);
+ if(noPOSH) {
+  if(result)tglNoPOSHAfterRestore(context,caller==tglCPSRestoreCaller);
+  else __atomic_fetch_add(&tglNoPOSHCounts[TGLNoPOSH::RestoreFalse],1,__ATOMIC_RELAXED);
+ }
  if(result && caller==tglCPSRestoreCaller)adlnCaptureOwnedGolden(context);
  return result && tglCPSRestorePointer(context,caller) &&
   (caller!=tglCPSRestoreCaller || tglAlderLakeNGoldenRestore(context));
@@ -532,6 +569,34 @@ bool tglCPSSerialize(void *,void *,OSSerialize *serializer) {
  for(unsigned i=0;i<17;++i)out[i+1]=__atomic_load_n(&tglCPSCounts[i],__ATOMIC_RELAXED);
  auto data=OSData::withBytes(out,sizeof(out));if(!data)return false;
  const bool ok=data->serialize(serializer);data->release();return ok;
+}
+// TGLNoPOSHLive on the IGPU: revision 1, enabled, then one dword per TGLNoPOSH::Count.
+bool tglNoPOSHSerialize(void *,void *,OSSerialize *serializer) {
+ uint32_t out[2+TGLNoPOSH::Slots] {1,__atomic_load_n(&tglNoPOSHEnabled,__ATOMIC_RELAXED)?1U:0U};
+ for(unsigned i=0;i<TGLNoPOSH::Slots;++i)out[2+i]=__atomic_load_n(&tglNoPOSHCounts[i],__ATOMIC_RELAXED);
+ auto data=OSData::withBytes(out,sizeof(out));if(!data)return false;
+ const bool ok=data->serialize(serializer);data->release();return ok;
+}
+// Exact donor sites the no-POSH contract depends on. Read-only qualification; the
+// only code change is the existing restoreFromSafeImage route.
+static __attribute__((noinline)) bool tglQualifyNoPOSH(mach_vm_address_t address,size_t size) {
+ static const uint8_t allocate[] {0x41,0xF6,0x45,0x6E,0x10,0x74,0x2C};               // 0x7BB13 POCS allocation
+ static const uint8_t clone[] {0x41,0xF6,0x45,0x6E,0x10,0x0F,0x85,0xE7,0x00,0x00,0x00,  // 0x7C15E clone branch
+  0xB8,0xEF,0xFF,0xEF,0xFF,0x41,0x23,0x87,0x0C,0x10,0x00,0x00,0x0D,0x00,0x00,0x10,0x00};
+ static const uint8_t restore[] {0x41,0xF6,0x44,0x24,0x6E,0x10,0x74,0x31};           // 0x7C421 POCS copy
+ static const uint8_t reset[] {0xE8,0x74,0xFA,0xFF,0xFF};                            // 0x7C919 beginReset call
+ static const uint8_t batch[] {0x31,0xC9,0x83,0xE0,0x10,0x48,0xC1,0xE0,0x10};       // 0x4301F BB_START bit 20
+ static const uint8_t params[] {0,0,0x1C,0,0,0,0,0,0,0,0,0};                          // 0xB09A4, 0xB0BC0
+ if(size<=0xC04A0+TGLNoPOSH::LRCARegisterOffset-0x1000+4)return false;
+ auto at=[address](uint32_t offset){return reinterpret_cast<const void *>(address+offset);};
+ uint32_t control=0,lrca=0;
+ memcpy(&control,at(0xC04A0+TGLNoPOSH::ControlRegisterOffset-0x1000),4);
+ memcpy(&lrca,at(0xC04A0+TGLNoPOSH::LRCARegisterOffset-0x1000),4);
+ return !memcmp(at(0x7BB13),allocate,sizeof(allocate)) && !memcmp(at(0x7C15E),clone,sizeof(clone)) &&
+  !memcmp(at(0x7C421),restore,sizeof(restore)) && !memcmp(at(0x7C919),reset,sizeof(reset)) &&
+  !memcmp(at(0x4301F),batch,sizeof(batch)) && !memcmp(at(0xB09A4),params,sizeof(params)) &&
+  !memcmp(at(0xB0BC0),params,sizeof(params)) &&
+  control==TGLNoPOSH::ControlRegister && lrca==TGLNoPOSH::LRCARegister;
 }
 // Constructor return is before scheduler submission. This covers fresh RCS
 // images and safe-image clones; beginReset later restores the qualified image.
@@ -4387,7 +4452,7 @@ bool XE::xelpInstallHostRPS(KernelPatcher &patcher,size_t index,mach_vm_address_
 void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
 	// This must precede tglLoadHDMIWiring, tglPrepareMMIOUC and TGL FIA reads.
 	auto physicalGPU = OSDynamicCast(IOPCIDevice, info->videoBuiltin);
-	tglTeardownGPU = physicalGPU;
+	tglLiveGPU = physicalGPU;
 	selectProfile(XELP::deviceProfile(physicalGPU));
     // ADLP_LOAD_ONLY_KERNEL: do not enter TGL MMIO/FIA, bootstrap or VM setup.
     const auto physicalEntry=XELP::deviceEntry(xeProfile.identity);
@@ -11786,6 +11851,17 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			}
 			patcher.clearError();
 			wexDiagRoot()->setProperty("TGLCPSColorPipeReady",cpsOK);
+			// -wexnoposh rides on the restoreFromSafeImage route above. Tiger Lake only:
+			// ADL-N/ADL-P/RPL already select the no-POCS factory profile.
+			if(checkKernelArgument("-wexnoposh")) {
+				const bool noPOSH=cpsOK && !adlnDetected && tglQualifyNoPOSH(address,size);
+				__atomic_store_n(&tglNoPOSHEnabled,noPOSH,__ATOMIC_RELEASE);
+				wexDiagRoot()->setProperty("TGLNoPOSHReady",noPOSH);
+				if(auto live=OSSerializer::forTarget(nullptr,tglNoPOSHSerialize)) {
+					(tglLiveGPU ? tglLiveGPU : wexDiagRoot())->setProperty("TGLNoPOSHLive",live);live->release();
+				}
+				SYSLOG("igfx","TGL no-POSH %s (-wexnoposh)",noPOSH?"active":"not applied");
+			}
 			// Linux Gen12 Wa_18022495364: an INDIRECT_CTX cache invalidation,
 			// distinct from ring PIPE_CONTROL. Keep the per-context batch intact.
 			bool contextCacheOK=!contextCacheRequested;
@@ -12018,7 +12094,7 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 				}
 				patcher.clearError();
 				if (teardownOK) if (auto live=OSSerializer::forTarget(nullptr,tglTeardownSerialize)) {
-					(tglTeardownGPU ? tglTeardownGPU : wexDiagRoot())->setProperty("TGLTeardownDrainLive",live);live->release();
+					(tglLiveGPU ? tglLiveGPU : wexDiagRoot())->setProperty("TGLTeardownDrainLive",live);live->release();
 				}
 				SYSLOG("igfx","TGL teardown drain %s (-wexteardownfix)",teardownOK?"active":"not applied");
 			}

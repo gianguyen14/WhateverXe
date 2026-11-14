@@ -12,6 +12,7 @@
 #include <Headers/kern_iokit.hpp>
 #include <IOKit/pci/IOPCIDevice.h>
 XeHost *XeHost::callbackHost;
+extern bool tglNoPOSHEnabled; // kern_xe.cpp: set once the no-POSH hook is qualified
 struct FramebufferViewer : public IOFramebuffer {
  static IOMemoryMap *&getVramMap(IOFramebuffer *fb) { return static_cast<FramebufferViewer *>(fb)->fVramMap; }
 };
@@ -23,7 +24,7 @@ namespace {
 using PageValidator=void (*)(vnode_t,memory_object_t,memory_object_offset_t,const void *,int *,int *,int *);
 PageValidator orgValidatePage;
 bool pageFixEnabled[TGLPageFix::KindCount],pageFixReady;
-uint64_t pageFixSeen[TGLPageFix::KindCount],pageFixPatched[TGLPageFix::KindCount];
+uint64_t pageFixSeen[TGLPageFix::KindCount],pageFixPatched[TGLPageFix::KindCount],pageFixGated;
 // Runs after the kernel's check of each signed page; see kern_tgl_page_fix.hpp.
 void validatePage(vnode_t vnode,memory_object_t pager,memory_object_offset_t offset,const void *data,int *validated,int *tainted,int *nx) {
  orgValidatePage(vnode,pager,offset,data,validated,tainted,nx);
@@ -31,6 +32,13 @@ void validatePage(vnode_t vnode,memory_object_t pager,memory_object_offset_t off
  const auto kind=TGLPageFix::classify(data,TGLPageFix::PageSize,offset);
  if(kind==TGLPageFix::None)return;
  __atomic_fetch_add(&pageFixSeen[kind],1ULL,__ATOMIC_RELAXED);
+ // The Metal command buffer's POSH buffer may only be freed while no context runs POSH.
+ // A command in flight can still read it, which resets the GPU in a loop
+ // (b00t0x/WhateverXe#47: unconditional free), so wait for -wexnoposh.
+ if(kind==TGLPageFix::MTL && !__atomic_load_n(&tglNoPOSHEnabled,__ATOMIC_ACQUIRE)) {
+  __atomic_fetch_add(&pageFixGated,1ULL,__ATOMIC_RELAXED);
+  return;
+ }
  if(!pageFixEnabled[kind] || MachInfo::setKernelWriting(true,KernelPatcher::kernelWriteLock)!=KERN_SUCCESS)return;
  if(TGLPageFix::classify(data,TGLPageFix::PageSize,offset)==kind) {
   TGLPageFix::apply(kind,const_cast<void *>(data));
@@ -39,7 +47,7 @@ void validatePage(vnode_t vnode,memory_object_t pager,memory_object_offset_t off
  MachInfo::setKernelWriting(false,KernelPatcher::kernelWriteLock);
 }
 bool pageFixSerialize(void *,void *,OSSerialize *serializer) {
- const uint64_t q[] {3,pageFixReady,pageFixEnabled[TGLPageFix::VA],pageFixEnabled[TGLPageFix::MTL],
+ const uint64_t q[] {4,pageFixReady,pageFixEnabled[TGLPageFix::VA],pageFixEnabled[TGLPageFix::MTL],
   __atomic_load_n(&pageFixSeen[TGLPageFix::VA],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::VA],__ATOMIC_RELAXED),
   __atomic_load_n(&pageFixSeen[TGLPageFix::MTL],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::MTL],__ATOMIC_RELAXED),
   __atomic_load_n(&pageFixSeen[TGLPageFix::XFER],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::XFER],__ATOMIC_RELAXED),
@@ -47,7 +55,9 @@ bool pageFixSerialize(void *,void *,OSSerialize *serializer) {
   pageFixEnabled[TGLPageFix::NullGuardStatus],
   __atomic_load_n(&pageFixSeen[TGLPageFix::NullGuardStatus],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::NullGuardStatus],__ATOMIC_RELAXED),
   __atomic_load_n(&pageFixSeen[TGLPageFix::NullGuardPrepare],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::NullGuardPrepare],__ATOMIC_RELAXED),
-  __atomic_load_n(&pageFixSeen[TGLPageFix::NullGuardRender],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::NullGuardRender],__ATOMIC_RELAXED)};
+  __atomic_load_n(&pageFixSeen[TGLPageFix::NullGuardRender],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::NullGuardRender],__ATOMIC_RELAXED),
+  // Schema 4 appends the Metal pages held back because -wexnoposh was not active.
+  __atomic_load_n(&pageFixGated,__ATOMIC_RELAXED)};
  auto data=OSData::withBytes(q,sizeof(q));if(!data)return false;
  const bool ok=data->serialize(serializer);data->release();return ok;
 }
