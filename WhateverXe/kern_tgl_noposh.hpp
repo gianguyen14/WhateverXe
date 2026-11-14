@@ -63,4 +63,8 @@ inline uint32_t sanitize(uint8_t *image,uint64_t length) {
  return result;
 }
 }
+#ifdef KERNEL
+// Defined in kern_host.cpp, set by kern_xe.cpp: no-POSH qualified and installed.
+extern bool wexNoPOSHReady;
+#endif
 #endif

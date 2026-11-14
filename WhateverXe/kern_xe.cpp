@@ -11856,6 +11856,7 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			if(checkKernelArgument("-wexnoposh")) {
 				const bool noPOSH=cpsOK && !adlnDetected && tglQualifyNoPOSH(address,size);
 				__atomic_store_n(&tglNoPOSHEnabled,noPOSH,__ATOMIC_RELEASE);
+				__atomic_store_n(&wexNoPOSHReady,noPOSH,__ATOMIC_RELEASE);
 				wexDiagRoot()->setProperty("TGLNoPOSHReady",noPOSH);
 				if(auto live=OSSerializer::forTarget(nullptr,tglNoPOSHSerialize)) {
 					(tglLiveGPU ? tglLiveGPU : wexDiagRoot())->setProperty("TGLNoPOSHLive",live);live->release();

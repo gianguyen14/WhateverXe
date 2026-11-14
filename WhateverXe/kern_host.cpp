@@ -12,7 +12,9 @@
 #include <Headers/kern_iokit.hpp>
 #include <IOKit/pci/IOPCIDevice.h>
 XeHost *XeHost::callbackHost;
-extern bool tglNoPOSHEnabled; // kern_xe.cpp: set once the no-POSH hook is qualified
+// Set by kern_xe.cpp once the no-POSH hook is qualified. Global on purpose: the flag that hook
+// reads lives in an unnamed namespace of kern_xe.cpp, so another file cannot link to it.
+bool wexNoPOSHReady;
 struct FramebufferViewer : public IOFramebuffer {
  static IOMemoryMap *&getVramMap(IOFramebuffer *fb) { return static_cast<FramebufferViewer *>(fb)->fVramMap; }
 };
@@ -35,7 +37,7 @@ void validatePage(vnode_t vnode,memory_object_t pager,memory_object_offset_t off
  // The Metal command buffer's POSH buffer may only be freed while no context runs POSH.
  // A command in flight can still read it, which resets the GPU in a loop
  // (b00t0x/WhateverXe#47: unconditional free), so wait for -wexnoposh.
- if(kind==TGLPageFix::MTL && !__atomic_load_n(&tglNoPOSHEnabled,__ATOMIC_ACQUIRE)) {
+ if(kind==TGLPageFix::MTL && !__atomic_load_n(&wexNoPOSHReady,__ATOMIC_ACQUIRE)) {
   __atomic_fetch_add(&pageFixGated,1ULL,__ATOMIC_RELAXED);
   return;
  }
