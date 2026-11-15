@@ -177,6 +177,43 @@ static void checkGVAAssert() {
 
 // The two `jne` instructions in AVFPixelProcessCore_PrepareToTransferImages that jumped to
 // assert(0) now jump to the function's own error return.
+// The VFE windows: exact bytes of the VA driver (0.4.0 and 0.4.4 share these offsets), applied only to their own page.
+static void checkVFE() {
+	struct Case { Kind kind; const Window *w; } cases[] {{VFEL3, &VFEL3Window}, {VFESites, &VFESitesWindow}, {VFETemplate, &VFETemplateWindow}, {CMFCVersion, &CMFCWindow}, {VFEThreads, &VFEThreadsWindow}};
+	for (const auto &c : cases) {
+		const auto &w = *c.w;
+		assert(w.at + w.length <= PageSize);
+		std::vector<uint8_t> page(PageSize, 0xcc);
+		memcpy(page.data() + w.at, w.from, w.length);
+		assert(classify(page.data(), PageSize, w.pageOffset) == c.kind);
+		assert(classify(page.data(), PageSize, w.pageOffset + PageSize) == None);
+		assert(classify(page.data(), PageSize - 1, w.pageOffset) == None);
+		auto original = page;
+		apply(c.kind, page.data());
+		size_t changed = 0;
+		for (size_t j = 0; j < PageSize; j++) {
+			if (page[j] == original[j]) continue;
+			assert(j >= w.at && j < w.at + w.length);
+			changed++;
+		}
+		assert(changed > 0 && !memcmp(page.data() + w.at, w.to, w.length));
+		assert(classify(page.data(), PageSize, w.pageOffset) == None); // Patched pages are not matched again.
+		// The real driver, when the file is available: the window must match the file bytes.
+		std::vector<uint8_t> real;
+		if (readPage(VAPath, w.pageOffset, real) && !memcmp(real.data() + w.at, w.from, w.length))
+			assert(classify(real.data(), PageSize, w.pageOffset) == c.kind);
+	}
+	// L3: data 0xD0000020 into register 0xB134; the rest of the qword is the same movabs.
+	assert(!memcmp(VFEL3To + 10, "\x48\xb8\x34\xb1\x00\x00\x20\x00\x00\xd0", 10));
+	// Scoreboard: DW6-DW8 of the template are zero, the stores are nops or a zeroing and.
+	for (size_t i = 24; i < 36; i++) assert(VFETemplateTo[i] == 0);
+	assert(VFESitesTo[7] == 0x83 && VFESitesTo[8] == 0x67 && VFESitesTo[9] == 0xf8 && VFESitesTo[10] == 0x00); // andl $0, -8(%rdi)
+	assert(!memcmp(VFESitesTo + 13, "\x0f\x1f\x40\x00", 4) && !memcmp(VFESitesTo + 19, "\x0f\x1f\x40\x00", 4));
+	// Distinct pages of the VA driver, none of them the VA/XFER/MTL pages.
+	assert(VFEL3Window.pageOffset != VFESitesWindow.pageOffset && VFESitesWindow.pageOffset != VFETemplateWindow.pageOffset);
+	assert(VFEL3Window.pageOffset != VAOffset && VFETemplateWindow.pageOffset != XferOffset);
+}
+
 static void checkGVAConfigure() {
 	const auto &w = GVAConfigureWindow;
 	assert(w.at + w.length <= PageSize && w.length == sizeof(GVAConfigureFrom) && w.length == sizeof(GVAConfigureTo));
@@ -246,6 +283,17 @@ int main() {
 	checkNullGuard();
 	checkGVAAssert();
 	checkGVAConfigure();
+	checkVFE();
+	{ // -wexnullskip: one byte of the guarded render step window, only when the flag is set.
+		const auto &w = NullGuardWindows[2];
+		assert(w.to[56] == 0x05 && w.to[55] == 0xe4 && w.to[54] == 0x45 && w.to[53] == 0xc7); // movl $5, -0x1c(%rbp)
+		std::vector<uint8_t> page(PageSize, 0xcc);
+		memcpy(page.data() + w.at, w.from, w.length);
+		NullGuardSkip = true;
+		apply(NullGuardRender, page.data());
+		NullGuardSkip = false;
+		assert(page[w.at + 56] == 0 && !memcmp(page.data() + w.at, w.to, 56) && !memcmp(page.data() + w.at + 57, w.to + 57, w.length - 57));
+	}
 	puts("tgl_page_fix ok");
 	return 0;
 }

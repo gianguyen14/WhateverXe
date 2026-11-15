@@ -63,10 +63,35 @@
 // One 244-byte window of page 0x635c000 changes 3 bytes.
 // Pages are matched by file offset, fields and a full SHA-256, once the kernel
 // has validated them, so the signed bundles stay untouched.
+// VFE (-wexvfe): the AppleIntelTGLGraphicsVADriver (Intel media-driver code, MhwRenderInterfaceG12) builds its media
+// pipeline with two leftovers from older generations that Gen12 does not have, which is why the VP batch (MEDIA_OBJECT
+// stream on RCS) never completes: "VFE, TSG0, CS not finished" in the hang reports (b00t0x/WhateverXe#23, #81).
+// L3: the media L3 setup emits MI_LOAD_REGISTER_IMM with the packed qword 0x80000040'00000000, that is data 0x80000040
+// into register offset 0; the Gen12 register is L3ALLOCREG (0xB134) and the media value is 0xD0000020 (VA file offset
+// 0x1c2a, `movabs $imm64, %rax` stored at +4 of the command). VFEL3 rewrites the immediate.
+// MEDIA_VFE_STATE: Gen11/12 has no scoreboard (Mesa genxml: DW3 threads/URB, DW5 CURBE/URB sizes, DW6-8 unused), but the
+// state builder (VA 0x2c956..0x2ca57) still copies a 9-dword template whose DW6-DW8 are the old scoreboard mask and
+// deltas (0x31d720: DW6 0xff, DW7 0xfff1f00f, DW8 0xefe1e01f) and then sets the scoreboard enable (DW6 bit 31, or
+// 0x80000001 with DW7 0xf/0xf0 per walker mode). VFETemplate zeroes DW6-DW8 of the template, VFESites turns the three
+// stores into no-ops (`orb $0x80, 0x1b` becomes `andl $0, DW6`, the two `movq %r10/%r11, DW6` become 4-byte nops).
+// Same Mach-O file offsets in Graphics 0.4.0 and 0.4.4 (16.0.32). Matched by exact windows only. Not derived from the
+// upstream tables (b00t0x/WhateverXe 7b0138a, Raptor Lake-P): the "independent EU dispatch" bit they also set is not
+// reproduced here because its position is not known.
+// NULLSKIP (-wexnullskip, needs -wexnullguard): the VEBOX render step runs for the primary layer of every pass
+// (`cmpl $2, 0x134(%rcx)`: VPHAL SurfType 2 = SURF_IN_PRIMARY) and, with no VEBOX component, -wexnullguard makes it return
+// MOS_STATUS_NULL_POINTER (`movl $5, -0x1c(%rbp)` at VA 0x12d336), so 420v and BGRA conversions fail with "Error scheduling
+// command" and write nothing. With the result 0 the step reports success without a VEBOX output (the flag at +0x20 stays
+// clear and the caller returns), and the pass continues in the COMPOSITE renderer that already handles yuvs and 2vuy.
+// CMFCVERSION (-wexcmfc): the Fast Composite kernels of the VA driver are shipped as `CMPI` blobs (hundreds of them, all with
+// the 16-bit version 13 at offset 6), but the blob validator at VA 0x1ee5e0 only accepts versions 1..8 (`decl %ecx; subl $7;
+// ja`), so every one of them is rejected and CompositeState::Render (VA 0x1181b0) returns MOS_STATUS_UNKNOWN 0x1f for any layer
+// that is not yuvs or 2vuy (420v, BGRA): "Error scheduling command 0". The window turns the test into `subl $13` (valid when the
+// version is at most 13). Found with lldb on vtransfer_check under -wexnullguard -wexnullskip (2026-11-15).
 namespace TGLPageFix {
 
+inline bool NullGuardSkip = false;
 constexpr size_t PageSize = 4096;
-enum Kind { None = -1, VA = 0, MTL = 1, XFER = 2, NullGuardStatus = 3, NullGuardPrepare = 4, NullGuardRender = 5, GVAAssert = 6, GVAConfigure = 7, KindCount = 8 };
+enum Kind { None = -1, VA = 0, MTL = 1, XFER = 2, NullGuardStatus = 3, NullGuardPrepare = 4, NullGuardRender = 5, GVAAssert = 6, GVAConfigure = 7, VFEL3 = 8, VFESites = 9, VFETemplate = 10, CMFCVersion = 11, VFEThreads = 12, KindCount = 13 };
 
 constexpr uint64_t VAOffset = 0x786000;
 constexpr unsigned VACount = 0xfc4;
@@ -200,6 +225,66 @@ constexpr uint8_t GVAConfigureTo[244] {
 };
 constexpr Window GVAConfigureWindow {0x635c000, 0x13c, sizeof(GVAConfigureFrom), GVAConfigureFrom, GVAConfigureTo};
 
+// VFEL3: MI_LOAD_REGISTER_IMM offset 0 / data 0x80000040 becomes L3ALLOCREG (0xB134) / 0xD0000020.
+constexpr uint8_t VFEL3From[32] {
+	0x8d, 0x05, 0x1e, 0x9a, 0x24, 0x00, 0x8b, 0x00, 0x89, 0x07, 0x48, 0xb8, 0x00, 0x00, 0x00, 0x00,
+	0x40, 0x00, 0x00, 0x80, 0x48, 0x89, 0x47, 0x04, 0x5d, 0xc3, 0x55, 0x48, 0x89, 0xe5, 0x5d, 0xc3
+};
+constexpr uint8_t VFEL3To[32] {
+	0x8d, 0x05, 0x1e, 0x9a, 0x24, 0x00, 0x8b, 0x00, 0x89, 0x07, 0x48, 0xb8, 0x34, 0xb1, 0x00, 0x00,
+	0x20, 0x00, 0x00, 0xd0, 0x48, 0x89, 0x47, 0x04, 0x5d, 0xc3, 0x55, 0x48, 0x89, 0xe5, 0x5d, 0xc3
+};
+constexpr Window VFEL3Window {0x1000, 0xc20, sizeof(VFEL3From), VFEL3From, VFEL3To};
+
+// VFESites: the three scoreboard stores of the MEDIA_VFE_STATE builder (4 bytes each, same size).
+constexpr uint8_t VFESitesFrom[26] {
+	0x89, 0x4f, 0xec, 0x44, 0x89, 0x6f, 0xf4, 0x80, 0x4f, 0xfb, 0x80, 0xeb, 0x0a, 0x4c, 0x89, 0x57,
+	0xf8, 0xeb, 0x04, 0x4c, 0x89, 0x5f, 0xf8, 0x48, 0xff, 0xc3
+};
+constexpr uint8_t VFESitesTo[26] {
+	0x89, 0x4f, 0xec, 0x44, 0x89, 0x6f, 0xf4, 0x83, 0x67, 0xf8, 0x00, 0xeb, 0x0a, 0x0f, 0x1f, 0x40,
+	0x00, 0xeb, 0x04, 0x0f, 0x1f, 0x40, 0x00, 0x48, 0xff, 0xc3
+};
+constexpr Window VFESitesWindow {0x2c000, 0xa40, sizeof(VFESitesFrom), VFESitesFrom, VFESitesTo};
+
+// VFETemplate: DW6-DW8 of the 9-dword MEDIA_VFE_STATE template (old scoreboard mask and deltas) become 0.
+constexpr uint8_t VFETemplateFrom[36] {
+	0x07, 0x00, 0x00, 0x70, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0x0f, 0xf0, 0xf1, 0xff,
+	0x1f, 0xe0, 0xe1, 0xef
+};
+constexpr uint8_t VFETemplateTo[36] {
+	0x07, 0x00, 0x00, 0x70, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00
+};
+constexpr Window VFETemplateWindow {0x31d000, 0x720, sizeof(VFETemplateFrom), VFETemplateFrom, VFETemplateTo};
+
+// CMFCVersion: the CMPI blob validator accepts version 13.
+constexpr uint8_t CMFCFrom[32] {
+	0x55, 0x48, 0x89, 0xe5, 0x48, 0x89, 0x7d, 0xf0, 0x48, 0x8b, 0x45, 0xf0, 0x0f, 0xb7, 0x48, 0x06,
+	0xff, 0xc9, 0x83, 0xe9, 0x07, 0x0f, 0x87, 0x0e, 0x00, 0x00, 0x00, 0xe9, 0x00, 0x00, 0x00, 0x00
+};
+constexpr uint8_t CMFCTo[32] {
+	0x55, 0x48, 0x89, 0xe5, 0x48, 0x89, 0x7d, 0xf0, 0x48, 0x8b, 0x45, 0xf0, 0x0f, 0xb7, 0x48, 0x06,
+	0x83, 0xe9, 0x0d, 0x90, 0x90, 0x0f, 0x87, 0x0e, 0x00, 0x00, 0x00, 0xe9, 0x00, 0x00, 0x00, 0x00
+};
+constexpr Window CMFCWindow {0x1ee000, 0x5e0, sizeof(CMFCFrom), CMFCFrom, CMFCTo};
+
+// VFEThreads (-wexthreads): MhwRenderInterfaceG12::AddMediaVfeCmd (VA 0x1b9e80) takes the thread limit of MEDIA_VFE_STATE from
+// the parameters, or when they are 0 from the hardware caps at this+0x68 (set from the GT info in 0x37020), which is 0 here,
+// so the field becomes 0xffff (DW3 0xffff2040) and the media batch hangs the render engine. The window loads 560 - 1 (7 threads
+// per EU, 80 EUs of the Iris Xe) instead of the caps value.
+constexpr uint8_t VFEThreadsFrom[32] {
+	0xe9, 0x0d, 0x00, 0x00, 0x00, 0x48, 0x8b, 0x45, 0xa8, 0x8b, 0x48, 0x68, 0x83, 0xe9, 0x01, 0x89,
+	0x4d, 0x94, 0x8b, 0x45, 0x94, 0x8b, 0x4d, 0xc4, 0x25, 0xff, 0xff, 0x00, 0x00, 0xc1, 0xe0, 0x10
+};
+constexpr uint8_t VFEThreadsTo[32] {
+	0xe9, 0x0d, 0x00, 0x00, 0x00, 0x48, 0x8b, 0x45, 0xa8, 0xb9, 0x2f, 0x02, 0x00, 0x00, 0x90, 0x89,
+	0x4d, 0x94, 0x8b, 0x45, 0x94, 0x8b, 0x4d, 0xc4, 0x25, 0xff, 0xff, 0x00, 0x00, 0xc1, 0xe0, 0x10
+};
+constexpr Window VFEThreadsWindow {0x1ba000, 0xe0, sizeof(VFEThreadsFrom), VFEThreadsFrom, VFEThreadsTo};
+
 inline uint32_t rotate(uint32_t x, unsigned n) { return (x >> n) | (x << (32 - n)); }
 
 inline void block(uint32_t state[8], const uint8_t *p) {
@@ -274,6 +359,16 @@ inline Kind classify(const void *data, size_t size, uint64_t offset) {
 		return !memcmp(page + GVAConfigureWindow.at, GVAConfigureWindow.from, GVAConfigureWindow.length) ? GVAConfigure : None;
 	if (offset == GVAAssertWindow.pageOffset)
 		return !memcmp(page + GVAAssertWindow.at, GVAAssertWindow.from, GVAAssertWindow.length) ? GVAAssert : None;
+	if (offset == VFEL3Window.pageOffset)
+		return !memcmp(page + VFEL3Window.at, VFEL3Window.from, VFEL3Window.length) ? VFEL3 : None;
+	if (offset == VFESitesWindow.pageOffset)
+		return !memcmp(page + VFESitesWindow.at, VFESitesWindow.from, VFESitesWindow.length) ? VFESites : None;
+	if (offset == VFETemplateWindow.pageOffset)
+		return !memcmp(page + VFETemplateWindow.at, VFETemplateWindow.from, VFETemplateWindow.length) ? VFETemplate : None;
+	if (offset == CMFCWindow.pageOffset)
+		return !memcmp(page + CMFCWindow.at, CMFCWindow.from, CMFCWindow.length) ? CMFCVersion : None;
+	if (offset == VFEThreadsWindow.pageOffset)
+		return !memcmp(page + VFEThreadsWindow.at, VFEThreadsWindow.from, VFEThreadsWindow.length) ? VFEThreads : None;
 	if (offset == MTLOffset)
 		return page[MTLJump] == 0x75 && page[MTLJump + 1] == 0x0d && digestIs(page, MTLDigest) ? MTL : None;
 	return None;
@@ -293,9 +388,21 @@ inline void apply(Kind kind, void *data) {
 		memcpy(page + GVAConfigureWindow.at, GVAConfigureWindow.to, GVAConfigureWindow.length);
 	} else if (kind == GVAAssert) {
 		memcpy(page + GVAAssertWindow.at, GVAAssertWindow.to, GVAAssertWindow.length);
+	} else if (kind == VFEL3) {
+		memcpy(page + VFEL3Window.at, VFEL3Window.to, VFEL3Window.length);
+	} else if (kind == VFESites) {
+		memcpy(page + VFESitesWindow.at, VFESitesWindow.to, VFESitesWindow.length);
+	} else if (kind == VFETemplate) {
+		memcpy(page + VFETemplateWindow.at, VFETemplateWindow.to, VFETemplateWindow.length);
+	} else if (kind == CMFCVersion) {
+		memcpy(page + CMFCWindow.at, CMFCWindow.to, CMFCWindow.length);
+	} else if (kind == VFEThreads) {
+		memcpy(page + VFEThreadsWindow.at, VFEThreadsWindow.to, VFEThreadsWindow.length);
 	} else if (kind >= NullGuardStatus && kind <= NullGuardRender) {
 		const auto &w = NullGuardWindows[kind - NullGuardStatus];
 		memcpy(page + w.at, w.to, w.length);
+		if (kind == NullGuardRender && NullGuardSkip)
+			page[w.at + 56] = 0; // `movl $5, -0x1c(%rbp)` becomes `movl $0, -0x1c(%rbp)`.
 	}
 }
 

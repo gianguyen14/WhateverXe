@@ -157,6 +157,10 @@
   "-wexvaprobe": [],
   "-wexteardownfix": [],
   "-wexgvanoassert": [],
+  "-wexvfe": [],
+  "-wexnullskip": [],
+  "-wexcmfc": [],
+  "-wexthreads": [],
   "-wexnullguard": [],
   "-wexnoposh": []
 }
