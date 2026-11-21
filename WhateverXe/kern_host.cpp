@@ -190,7 +190,7 @@ void XeHost::init() {
  callbackHost=this;
  // Copy the firmware tables while the boot firmware still owns them. This
  // performs no GPU initialization; native admission remains image-triggered.
- lilu.onPatcherLoadForce([](void *u,KernelPatcher &){static_cast<XeHost *>(u)->captureFirmware();},this);
+ lilu.onPatcherLoadForce([](void *u,KernelPatcher &p){static_cast<XeHost *>(u)->captureFirmware(p);},this);
  PE_parse_boot_argn("gfxrst",&resetFramebuffer,sizeof(resetFramebuffer));
  if(resetFramebuffer>=FB_TOTAL)resetFramebuffer=FB_DETECT;
  lilu.onKextLoadForce(nullptr,0,[](void *u,KernelPatcher &p,size_t i,mach_vm_address_t a,size_t s){static_cast<XeHost *>(u)->processKext(p,i,a,s);},this);
@@ -201,10 +201,16 @@ void XeHost::init() {
  xe.init();
  XeDataAccess::init();
 }
-void XeHost::captureFirmware() {
+void XeHost::captureFirmware(KernelPatcher &patcher) {
  auto info=DeviceInfo::create();if(!info)return;
  auto gpu=OSDynamicCast(IOPCIDevice,info->videoBuiltin);
- if(gpu && WIOKit::awaitPublishing(gpu))xe.captureFirmware(gpu,XELP::deviceProfile(gpu));
+ const bool published=gpu && WIOKit::awaitPublishing(gpu);
+ const auto profile=published ? XELP::deviceProfile(gpu) : XELP::Profile {};
+ if(published)xe.captureFirmware(gpu,profile);
+ // The page fix qualifies and routes _cs_validate_page here, at kernel load. Other Lilu plugins
+ // (BlueToolFixup, BTLEAdvFixup) hook the same function and rewrite its first bytes, so doing this
+ // later, when the Graphics stack loads, fails the byte fingerprint and would overwrite their jump.
+ preparePageFix(patcher,published ? gpu : nullptr,profile);
  DeviceInfo::deleter(info);
 }
 void XeHost::processKernel(KernelPatcher &patcher) {
@@ -217,7 +223,6 @@ void XeHost::processKernel(KernelPatcher &patcher) {
  // The host must dispatch framebuffer patches and accelerator rejection
  // hooks even when the selected profile deliberately has no Render backend.
  active=profile.displayAdmitted();
- preparePageFix(patcher,published ? gpu : nullptr,profile);
  const auto display=XELP::displayAdapter(profile.family);
  systemWakeRecovery=active && (display==XELP::DisplayAdapter::ADLP || display==XELP::DisplayAdapter::ADLN);
  backlightEnabled=active && (display==XELP::DisplayAdapter::TGL || display==XELP::DisplayAdapter::ADLS ||

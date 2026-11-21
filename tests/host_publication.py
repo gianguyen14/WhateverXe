@@ -139,7 +139,7 @@ struct XeHost {
  } xe;
  void init();
  void processKernel(KernelPatcher &);
- void captureFirmware();
+ void captureFirmware(KernelPatcher &);
  void processKext(KernelPatcher &,size_t,mach_vm_address_t,size_t);
  static void wrapPanelSetDisplay(){}static void wrapFramebufferInit(){}
  uintptr_t orgPanelSetDisplay=0,orgFramebufferInit=0;uint8_t *gIOFBVerboseBootPtr=nullptr;
