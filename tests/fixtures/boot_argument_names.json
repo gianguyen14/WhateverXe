@@ -164,5 +164,6 @@
   "-wexcmfc": [],
   "-wexthreads": [],
   "-wexnullguard": [],
-  "-wexnoposh": []
+  "-wexnoposh": [],
+  "-wexnoccs": []
 }

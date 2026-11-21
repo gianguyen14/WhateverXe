@@ -14652,6 +14652,26 @@ bool XE::wrapTGLAcceleratorStart(IOService *that, IOService *provider) {
 		that->setProperty("Development",copy);copy->release();
 		pci->setProperty("N97NativeStartAllowed",true);
 	}
+	// -wexnoccs: the personality ships EnableMultiContext=1, which lets user clients
+	// (mediaanalysisd, Vision/CoreML) open compute-streamer contexts on the CCS engine.
+	// On Tiger Lake without GuC those submissions hang the ring and start a restart
+	// storm (b00t0x/WhateverXe#163). Clearing the key before the parent start keeps the
+	// accelerator on the render/blit/video engines only. Only the Development dictionary
+	// copy changes; the kext binary and its signature stay untouched.
+	if (checkKernelArgument("-wexnoccs")) {
+		bool applied=false;
+		if (auto dev=OSDynamicCast(OSDictionary,that->getProperty("Development"))) {
+			if (auto copy=OSDictionary::withDictionary(dev)) {
+				if (auto zero=OSNumber::withNumber(static_cast<unsigned long long>(0),32)) {
+					copy->setObject("EnableMultiContext",zero);zero->release();
+					applied=that->setProperty("Development",copy);
+				}
+				copy->release();
+			}
+		}
+		SYSLOG("igfx","TGL no-CCS multi-context %s (-wexnoccs)",applied?"active":"not applied");
+		wexDiagRoot()->setProperty("TGLNoCCSApplied",applied);
+	}
 	// The current kernel personality uses 0x1080040, rejected by AppleGVA before
 	// AVD_CreateAVDAccelerator. The paired TGL VA donor returns 0x1080080.
 	// Align this registry identity only; keep the real PCI ID and TGL bundle.
