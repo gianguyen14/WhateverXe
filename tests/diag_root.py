@@ -6,6 +6,10 @@ root = Path(__file__).resolve().parents[1] / 'WhateverXe'
 for p in sorted(root.glob('*.[ch]pp')):
     if p.name.startswith('kern_diag.'):
         continue
+    # The Graphics activation token is a functional contract with the Graphics
+    # package, not a diagnostic, so it must stay on the real registry root.
+    if p.name == 'kern_graphics_activation.hpp':
+        continue
     assert 'getRegistryRoot' not in p.read_text(), p.name
 diag = (root / 'kern_diag.cpp').read_text()
 assert 'checkKernelArgument("-wexdiag")' in diag

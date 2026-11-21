@@ -12,11 +12,12 @@ assert re.search(r'static constexpr uint32_t tglTahoeDisabledTrials=31;', source
 scope = re.search(r'const bool tahoeTrialScope=(.*?);', source, re.S).group(1)
 assert '!adlnDetected' in scope and 'checkKernelArgument("-disablegfxfirmware")' in scope
 assert tahoe in scope and sequoia in scope
-# Single-pass recovery requires host scheduling and the admitted OS families.
+# Single-pass recovery requires host scheduling; upstream 0.8.3 selects it by
+# firmware mode and exact donor ABI, with no host OS allow-list.
 recovery = re.search(r'const bool recoveryRequested=(.*?);', source, re.S).group(1)
 assert 'checkKernelArgument("-disablegfxfirmware")' in recovery
-assert {m for m in re.findall(r'XELP::OS::(\w+)', recovery)} == {'BigSur', 'Sequoia', 'Tahoe'}
-assert 'recoveryOK=hostOK && size>0xDF668' in source
+assert not re.findall(r'XELP::OS::(\w+)', recovery)
+assert 'recoveryOK=hostOK && orgTGLHostWait && size>0xDF668' in source
 # Failure-only pre-STOP wake and hang detail share the Tahoe/Sequoia scope.
 prestop = source[source.index('// Exact failure-only wake call.'):source.index('TGLHangPreStopReady",ok')]
 assert tahoe in prestop and sequoia in prestop and 'bool ok=hangOK && size>0x569c6' in prestop

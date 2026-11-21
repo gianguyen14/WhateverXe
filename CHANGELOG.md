@@ -22,6 +22,52 @@
 - Scale the Tiger Lake GPU clock with load under `-disablegfxfirmware`. Without GuC SLPC the request stayed at RP0 whenever the GT was awake, taking power from the CPU on 15 W parts; it now follows RC6 residency between RP1 and RP0. `-wexrpsmax` restores the fixed RP0 request.
 - Report GPU utilization with `-disablegfxfirmware` on Tiger Lake. The native statistics page is filled by graphics firmware, so Activity Monitor and `PerformanceStatistics` always showed 0%; each context's measured GPU run time is now accounted there (Render and Compute together, Blit, and media engines, the three units the native reader reports, including the running context's live time at each read, with each unit's growth bounded by elapsed time), and the frequency-scaled value uses Tiger Lake's RPSTAT1/RP_STATE_CAP so it no longer exceeds 100%.
 
+## 0.8.3
+
+### Added
+
+- Add experimental VESA AUX brightness control for internal eDP on Alder Lake and Raptor Lake. Hardware validation on internal panels is pending.
+
+### Fixed
+
+- Improve experimental internal eDP support on Alder Lake and Raptor Lake at startup and after display sleep.
+- Fix a GPU recovery failure that could stall a normal restart after a graphics hang.
+
+## 0.8.2
+
+Update WhateverXe and [WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphics/releases) together.
+
+### Fixed
+
+- Fix a regression introduced in 0.8.1 that could leave displays black after macOS starts.
+
+### Added in 0.8.1
+
+- Add experimental 10-bit framebuffer support for the supported MIPI DSI panels.
+
+### Fixes from 0.8.1
+
+- Preserve firmware display output when only one of the two graphics components is installed.
+- Correct missing or duplicate display wake notifications after system sleep.
+- Fix graphics memory mapping at buffer boundaries.
+
+## 0.8.0
+
+Use the latest [WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphics/releases) package with this update.
+
+### Added
+
+- Add Raptor Lake-U graphics support.
+- Add experimental system sleep/wake support, tested on MIPI DSI laptop configurations with Big Sur and Tahoe and model-specific ACPI settings.
+- Add an optional 60 Hz mode for matching MIPI DSI panels in MiniBook X N100 and U300.
+
+### Fixed
+
+- Fix a regression introduced in 0.7.0 that disabled graphics acceleration on some supported Tiger Lake configurations.
+- Fix restart and shutdown with the supported MIPI DSI panels, and accelerated startup with USB-C displays already connected.
+- Fix rotated MIPI DSI display-mode selection and improve display restoration after sleep.
+- Improve compatibility with supported macOS updates when kernel or system-driver code placement changes.
+
 ## 0.7.0
 
 Use the latest [WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphics/releases) package with this update.

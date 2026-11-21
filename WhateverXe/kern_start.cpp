@@ -10,6 +10,7 @@
 
 #include "kern_host.hpp"
 #include "kern_diag.hpp"
+#include "kern_graphics_activation.hpp"
 
 static XeHost host;
 
@@ -40,6 +41,7 @@ PluginConfiguration ADDPR(config) {
 	[]() {
 		wexDiagRoot();
 		host.init();
+		WEXGraphicsActivation::publish();
 	}
 };
 
