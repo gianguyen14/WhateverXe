@@ -150,6 +150,14 @@ void preparePageFix(KernelPatcher &patcher,IOPCIDevice *gpu,const XELP::Profile 
   if(!code) {admission.status=TGLPageFix::AdmissionStatus::SymbolMissing;publishPageAdmission(gpu,admission);return;}
   admission.fingerprintComputed=TGLPageFix::validatorFingerprint(reinterpret_cast<const void *>(code),308,admission.computed);
   if(!admission.fingerprintComputed || memcmp(admission.computed,TGLPageFix::ValidatorExpected,32)) {
+   // Evidence for a rejection: the address and the 308 bytes the fingerprint covered (read-only,
+   // the same bytes already hashed above), so they can be compared with the expected callback layout.
+   if(gpu) {
+    uint64_t address=static_cast<uint64_t>(code);
+    uint8_t evidence[308];memcpy(evidence,reinterpret_cast<const void *>(code),sizeof(evidence));
+    gpu->setProperty("TGLPageFixValidatorAddress",&address,sizeof(address));
+    gpu->setProperty("TGLPageFixValidatorBytes",evidence,sizeof(evidence));
+   }
    admission.status=TGLPageFix::AdmissionStatus::FingerprintRejected;publishPageAdmission(gpu,admission);return;
   }
  }
