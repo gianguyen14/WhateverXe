@@ -9,6 +9,8 @@
 #include <Headers/kern_mach.hpp>
 #include <Headers/kern_patcher.hpp>
 #include <sys/vnode.h>
+#include <mach/vm_param.h>
+extern "C" const char version[];
 #include <Headers/kern_iokit.hpp>
 #include <IOKit/pci/IOPCIDevice.h>
 XeHost *XeHost::callbackHost;
@@ -30,8 +32,12 @@ uint64_t pageFixSeen[TGLPageFix::KindCount],pageFixPatched[TGLPageFix::KindCount
 // Runs after the kernel's check of each signed page; see kern_tgl_page_fix.hpp.
 void validatePage(vnode_t vnode,memory_object_t pager,memory_object_offset_t offset,const void *data,int *validated,int *tainted,int *nx) {
  orgValidatePage(vnode,pager,offset,data,validated,tainted,nx);
- if(!validated || !tainted || !nx || *validated!=0xf || *tainted || *nx)return;
- const auto kind=TGLPageFix::classify(data,TGLPageFix::PageSize,offset);
+ if(!validated || !tainted || !nx)return;
+ const auto span=TGLPageFix::validationSpan(getKernelVersion(),*validated,*tainted,*nx,PAGE_SIZE);
+ if(!span || offset%span)return;
+ // Darwin 25 never even classifies window-only experimental patches.
+ if(getKernelVersion()==KernelVersion::Tahoe && offset!=TGLPageFix::XferOffset)return;
+ const auto kind=TGLPageFix::classify(data,span,offset);
  if(kind==TGLPageFix::None)return;
  __atomic_fetch_add(&pageFixSeen[kind],1ULL,__ATOMIC_RELAXED);
  // The Metal command buffer's POSH buffer may only be freed while no context runs POSH.
@@ -49,7 +55,7 @@ void validatePage(vnode_t vnode,memory_object_t pager,memory_object_offset_t off
  MachInfo::setKernelWriting(false,KernelPatcher::kernelWriteLock);
 }
 bool pageFixSerialize(void *,void *,OSSerialize *serializer) {
- const uint64_t q[] {9,pageFixReady,pageFixEnabled[TGLPageFix::VA],pageFixEnabled[TGLPageFix::MTL],
+ const uint64_t q[] {10,pageFixReady,pageFixEnabled[TGLPageFix::VA],pageFixEnabled[TGLPageFix::MTL],
   __atomic_load_n(&pageFixSeen[TGLPageFix::VA],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::VA],__ATOMIC_RELAXED),
   __atomic_load_n(&pageFixSeen[TGLPageFix::MTL],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::MTL],__ATOMIC_RELAXED),
   __atomic_load_n(&pageFixSeen[TGLPageFix::XFER],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::XFER],__ATOMIC_RELAXED),
@@ -76,34 +82,80 @@ bool pageFixSerialize(void *,void *,OSSerialize *serializer) {
   __atomic_load_n(&pageFixSeen[TGLPageFix::CMFCVersion],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::CMFCVersion],__ATOMIC_RELAXED),
   // Schema 9 appends the VFE thread limit (-wexthreads): enabled, seen, patched.
   pageFixEnabled[TGLPageFix::VFEThreads],
-  __atomic_load_n(&pageFixSeen[TGLPageFix::VFEThreads],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::VFEThreads],__ATOMIC_RELAXED)};
+  __atomic_load_n(&pageFixSeen[TGLPageFix::VFEThreads],__ATOMIC_RELAXED),__atomic_load_n(&pageFixPatched[TGLPageFix::VFEThreads],__ATOMIC_RELAXED),
+  pageFixEnabled[TGLPageFix::XFER],static_cast<uint64_t>(getKernelVersion()),PAGE_SIZE};
  auto data=OSData::withBytes(q,sizeof(q));if(!data)return false;
  const bool ok=data->serialize(serializer);data->release();return ok;
 }
 // -wexvaprobe only counts matching pages; it wins over the fixes. -wexnullguard
 // replaces the pixel-transfer part of -wexvafix (XFER), which would otherwise make
 // every scaler context fail again.
+void publishPageAdmission(IOPCIDevice *gpu,const TGLPageFix::Admission &a) {
+ // Fixed schema: eight native uint64_t words, followed by two raw SHA-256 digests.
+ struct Record { uint64_t q[8]; uint8_t computed[32],expected[32]; } r {};
+ r.q[0]=1;r.q[1]=static_cast<uint64_t>(a.status);r.q[2]=getKernelVersion();r.q[3]=PAGE_SIZE;
+ r.q[4]=a.symbolResolved;r.q[5]=a.fingerprintComputed;r.q[6]=pageFixReady;r.q[7]=308;
+ memcpy(r.computed,a.computed,32);memcpy(r.expected,TGLPageFix::ValidatorExpected,32);
+ if(!gpu || !gpu->setProperty("TGLPageFixAdmission",&r,sizeof(r))) {
+  char computed[65] {},expected[65] {};const char hex[]="0123456789abcdef";
+  for(unsigned i=0;i<32;++i) {
+   computed[2*i]=hex[r.computed[i]>>4];computed[2*i+1]=hex[r.computed[i]&15];
+   expected[2*i]=hex[r.expected[i]>>4];expected[2*i+1]=hex[r.expected[i]&15];
+  }
+  SYSLOG("pagefix","admission publication failed: status=%llu symbol=%u computed=%u digest=%s expected=%s",r.q[1],a.symbolResolved,a.fingerprintComputed,computed,expected);
+ }
+}
 void preparePageFix(KernelPatcher &patcher,IOPCIDevice *gpu,const XELP::Profile &profile) {
+ TGLPageFix::Admission admission;
+ publishPageAdmission(gpu,admission);
  const bool probe=checkKernelArgument("-wexvaprobe");
+ const bool xfer=!probe && checkKernelArgument("-wexxferfix");
+ const bool tahoe=getKernelVersion()==KernelVersion::Tahoe;
  const bool fixVA=!probe && checkKernelArgument("-wexvafix"),fixMTL=!probe && checkKernelArgument("-wexleakfix");
  const bool guard=!probe && checkKernelArgument("-wexnullguard");
  const bool gvaAssert=!probe && checkKernelArgument("-wexgvanoassert");
  const bool vfe=!probe && checkKernelArgument("-wexvfe");
  const bool cmfc=!probe && checkKernelArgument("-wexcmfc");
  const bool threads=!probe && checkKernelArgument("-wexthreads");
- TGLPageFix::NullGuardSkip=!probe && guard && checkKernelArgument("-wexnullskip");
- if(!probe && !fixVA && !fixMTL && !guard && !gvaAssert && !vfe && !cmfc && !threads)return;
- if(!gpu || getKernelVersion()!=KernelVersion::Sequoia || profile.overridden() || !XELP::same(profile,XELP::identify(0x9A498086,0x1)))return;
+ TGLPageFix::NullGuardSkip=!tahoe && !probe && guard && checkKernelArgument("-wexnullskip");
+ const char expected[]="Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64";
+ admission.status=TGLPageFix::admissionGate(probe || xfer || fixVA || fixMTL || guard || gvaAssert || vfe || cmfc || threads,
+  gpu,getKernelVersion()==KernelVersion::Sequoia || tahoe,
+  !profile.overridden() && XELP::same(profile,XELP::identify(0x9A498086,0x1)),
+  !tahoe || !strcmp(version,expected),!tahoe || PAGE_SIZE==TGLPageFix::PageSize);
+ publishPageAdmission(gpu,admission);
+ if(admission.status!=TGLPageFix::AdmissionStatus::Qualified)return;
+ if(tahoe) {
+  auto code=patcher.solveSymbol(KernelPatcher::KernelID,"_cs_validate_page");
+  patcher.clearError();
+  admission.symbolResolved=code!=0;
+  if(!code) {admission.status=TGLPageFix::AdmissionStatus::SymbolMissing;publishPageAdmission(gpu,admission);return;}
+  admission.fingerprintComputed=TGLPageFix::validatorFingerprint(reinterpret_cast<const void *>(code),308,admission.computed);
+  if(!admission.fingerprintComputed || memcmp(admission.computed,TGLPageFix::ValidatorExpected,32)) {
+   admission.status=TGLPageFix::AdmissionStatus::FingerprintRejected;publishPageAdmission(gpu,admission);return;
+  }
+ }
  pageFixEnabled[TGLPageFix::VA]=fixVA;pageFixEnabled[TGLPageFix::XFER]=fixVA && !guard;pageFixEnabled[TGLPageFix::MTL]=fixMTL;
  pageFixEnabled[TGLPageFix::NullGuardStatus]=pageFixEnabled[TGLPageFix::NullGuardPrepare]=pageFixEnabled[TGLPageFix::NullGuardRender]=guard;
  pageFixEnabled[TGLPageFix::GVAAssert]=pageFixEnabled[TGLPageFix::GVAConfigure]=gvaAssert;
  pageFixEnabled[TGLPageFix::VFEL3]=pageFixEnabled[TGLPageFix::VFESites]=pageFixEnabled[TGLPageFix::VFETemplate]=vfe;
  pageFixEnabled[TGLPageFix::CMFCVersion]=cmfc;
  pageFixEnabled[TGLPageFix::VFEThreads]=threads;
+ if(tahoe) {
+  for(unsigned k=0;k<TGLPageFix::KindCount;++k)
+   pageFixEnabled[k]=TGLPageFix::policyAllows(25,xfer,probe,static_cast<TGLPageFix::Kind>(k));
+  if(!probe && !xfer) {admission.status=TGLPageFix::AdmissionStatus::PolicyRejected;publishPageAdmission(gpu,admission);return;}
+ }
+ publishPageAdmission(gpu,admission);
  KernelPatcher::RouteRequest route {"_cs_validate_page",validatePage,orgValidatePage};
  pageFixReady=patcher.routeMultipleLong(KernelPatcher::KernelID,&route,1);
  patcher.clearError();
- if(auto live=OSSerializer::forTarget(nullptr,pageFixSerialize)){gpu->setProperty("TGLPageFixLive",live);live->release();}
+ admission.status=pageFixReady ? TGLPageFix::AdmissionStatus::Routed : TGLPageFix::AdmissionStatus::RouteFailed;
+ publishPageAdmission(gpu,admission);
+ if(auto live=OSSerializer::forTarget(nullptr,pageFixSerialize)) {
+  if(!gpu->setProperty("TGLPageFixLive",live))SYSLOG("pagefix","live publication failed");
+  live->release();
+ } else SYSLOG("pagefix","live serializer allocation failed");
 }
 }
 void XeHost::init() {

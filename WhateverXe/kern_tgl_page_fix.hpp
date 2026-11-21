@@ -93,6 +93,15 @@ inline bool NullGuardSkip = false;
 constexpr size_t PageSize = 4096;
 enum Kind { None = -1, VA = 0, MTL = 1, XFER = 2, NullGuardStatus = 3, NullGuardPrepare = 4, NullGuardRender = 5, GVAAssert = 6, GVAConfigure = 7, VFEL3 = 8, VFESites = 9, VFETemplate = 10, CMFCVersion = 11, VFEThreads = 12, KindCount = 13 };
 
+// Darwin 25 is an explicit, separate XFER opt-in. Legacy Darwin 24 flags stay intact.
+inline bool policyAllows(unsigned darwin, bool xfer, bool probe, Kind kind) {
+ return darwin==24 || (darwin==25 && xfer && !probe && kind==XFER);
+}
+// Exact xnu-12377.161.15.700.19 x86_64 disassembly sets 15, not one bit
+// per host page. Only the qualified 4K callback span is readable here.
+inline size_t validationSpan(unsigned darwin, int validated, int tainted, int nx, size_t hostPage) {
+ return (darwin==24 || darwin==25) && validated==15 && !tainted && !nx && hostPage==PageSize ? PageSize : 0;
+}
 constexpr uint64_t VAOffset = 0x786000;
 constexpr unsigned VACount = 0xfc4;
 constexpr unsigned VAFormat = 0xfc8;
@@ -336,6 +345,46 @@ inline bool digestIs(const uint8_t *page, const uint8_t expected[32]) {
 	return !memcmp(actual, expected, sizeof(actual));
 }
 
+// Hash the complete pre-route callback, padded locally (never read beyond 308 bytes).
+// RIP-relative operands deliberately pin this to the inspected kernel link layout.
+enum class AdmissionStatus : uint64_t {
+ Entered=0, NotRequested=1, NoGPU=2, UnsupportedKernel=3, ProfileRejected=4,
+ VersionRejected=5, PageSizeRejected=6, SymbolMissing=7, FingerprintRejected=8,
+ Qualified=9, PolicyRejected=10, RouteFailed=11, Routed=12
+};
+struct Admission {
+ AdmissionStatus status {AdmissionStatus::Entered};
+ bool symbolResolved {}, fingerprintComputed {};
+ uint8_t computed[32] {};
+};
+inline AdmissionStatus admissionGate(bool requested,bool gpu,bool kernel,bool profile,bool versionOK,bool pageOK) {
+ return !requested ? AdmissionStatus::NotRequested : !gpu ? AdmissionStatus::NoGPU :
+  !kernel ? AdmissionStatus::UnsupportedKernel : !profile ? AdmissionStatus::ProfileRejected :
+  !versionOK ? AdmissionStatus::VersionRejected : !pageOK ? AdmissionStatus::PageSizeRejected : AdmissionStatus::Qualified;
+}
+// Exact BootKernelExtensions.kc layout, NOT the standalone /System/Library/Kernels/kernel.
+// KC relinks only four RIP-relative data operands in this 308-byte callback:
+// disp32 offsets 0x42,0x4f,0x5c,0x83 target zone_info+0x50,+0x58,
+// pmap_uanchor_zone+0x50,zone_info+0xb0 respectively. All differ by -0xdb2000
+// from the standalone image. Calls, opcodes, branches and ABI stores are identical.
+// No operand masking/normalization: even one changed operand bit must reject.
+inline constexpr uint8_t ValidatorExpected[32] {0xa0,0x37,0xf8,0xd5,0xae,0x80,0x54,0xd3,0xe2,0x11,0xde,0x6b,0x64,0x95,0x00,0xbb,0xfe,0xfc,0xc6,0x40,0x13,0xe9,0xb7,0xfe,0xd1,0x25,0xc6,0xa1,0xd2,0x24,0xa6,0x29};
+inline bool validatorFingerprint(const void *code, size_t size, uint8_t actual[32]) {
+ if(!code || size!=308)return false;
+ uint32_t state[8] {0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19};
+ const auto bytes=static_cast<const uint8_t *>(code);
+ for(size_t i=0;i<256;i+=64)block(state,bytes+i);
+ uint8_t tail[64] {};memcpy(tail,bytes+256,52);block(state,tail);
+ memset(tail,0,sizeof(tail));
+ for(size_t i=320;i<PageSize;i+=64)block(state,tail);
+ tail[0]=0x80;tail[62]=0x80;block(state,tail);
+ for(unsigned i=0;i<8;++i)for(unsigned j=0;j<4;++j)actual[4*i+j]=uint8_t(state[i]>>(24-8*j));
+ return true;
+}
+inline bool validatorQualified(const void *code,size_t size) {
+ uint8_t actual[32];
+ return validatorFingerprint(code,size,actual) && !memcmp(actual,ValidatorExpected,sizeof(actual));
+}
 inline Kind classify(const void *data, size_t size, uint64_t offset) {
 	if (!data || size != PageSize) return None;
 	auto page = static_cast<const uint8_t *>(data);
