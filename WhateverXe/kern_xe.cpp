@@ -56,6 +56,7 @@
 #include "kern_display13_cursor.hpp"
 #include "kern_tgl_context_teardown.hpp"
 #include "kern_tgl_noposh.hpp"
+#include "kern_rapl_probe.hpp"
 #include "kern_display13_dbuf.hpp"
 #include "kern_display13_wm.hpp"
 #include "kern_tgl_training_scope.hpp"
@@ -12202,6 +12203,17 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 					(tglLiveGPU ? tglLiveGPU : wexDiagRoot())->setProperty("TGLNoPOSHLive",live);live->release();
 				}
 				SYSLOG("igfx","TGL no-POSH %s (-wexnoposh)",noPOSH?"active":"not applied");
+			}
+			// -wexraplprobe: read-only snapshot of the power-limit MSRs (kern_rapl_probe.hpp).
+			if(checkKernelArgument("-wexraplprobe")) {
+				WEXRapl::init(patcher);
+				if(auto live=OSSerializer::forTarget(nullptr,WEXRapl::serialize)) {
+					(tglLiveGPU ? tglLiveGPU : wexDiagRoot())->setProperty("WEXRaplProbe",live);live->release();
+				}
+				SYSLOG("igfx","RAPL probe %s (-wexraplprobe)",WEXRapl::readCarefully?"active":"rdmsr_carefully not found");
+				// Experiment only: set the EC's DPTF mode register once (see kern_rapl_probe.hpp).
+				if(checkKernelArgument("-wexecdptf")) WEXRapl::ecSetDptf(1);
+				else if(checkKernelArgument("-wexecdptf0")) WEXRapl::ecSetDptf(0);
 			}
 			// Linux Gen12 Wa_18022495364: an INDIRECT_CTX cache invalidation,
 			// distinct from ring PIPE_CONTROL. Keep the per-context batch intact.
