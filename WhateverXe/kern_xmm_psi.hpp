@@ -179,16 +179,13 @@ namespace WEXXmm {
 			else { rstRes.acpiRc1 = 0xDEAD0002; ent->release(); }
 		} else rstRes.acpiRc1 = 0xDEAD0001;
 		if (!acpi) { rstRes.status = 2; return; }
+		// In the WWAN branch of the firmware (If (WWEN != 0 && WWRP == SLOT)), _RST is a method of PXSX itself (next to SHRF
+		// and DOSV), not of the WRST power resource: the dotted forms are rejected with kIOReturnBadArgument.
 		OSObject *res = nullptr;
-		IOReturn rc = acpi->evaluateObject("WRST._RST", &res);
+		IOReturn rc = acpi->evaluateObject("_RST", &res);
 		rstRes.acpiRc1 = static_cast<uint32_t>(rc);
 		if (res) { res->release(); res = nullptr; }
-		if (rc != kIOReturnSuccess) {
-			rc = acpi->evaluateObject("\\_SB.PC00.RP05.PXSX.WRST._RST", &res);
-			rstRes.acpiRc2 = static_cast<uint32_t>(rc);
-			if (res) { res->release(); res = nullptr; }
-			if (rc != kIOReturnSuccess) { rstRes.status = 3; return; }
-		}
+		if (rc != kIOReturnSuccess) { rstRes.status = 3; return; }
 		// Wait for the config space to answer again.
 		unsigned ms = 0;
 		uint32_t v = 0;
