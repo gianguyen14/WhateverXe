@@ -23,6 +23,7 @@ namespace WEXXmm {
 	// u32 bar2Status (BAR2[0]), u32 bar2Mode (BAR2[0x60]).
 	static IOPCIDevice *dev {};
 	static volatile uint32_t *bar2 {};
+	static volatile uint32_t *bar0 {};
 	static uint64_t bar2Phys {};
 	static uint32_t mapStatus {1};
 	static bool enableMem {};
@@ -46,8 +47,8 @@ namespace WEXXmm {
 	}
 
 	static inline bool serialize(void *, void *, OSSerialize *serializer) {
-		struct Blob { uint32_t revision, found, status, command; uint32_t cfg[64]; uint64_t bar2Phys; uint32_t bar2Status, bar2Mode, enabledTemporarily, pad; } blob {};
-		blob.revision = 2;
+		struct Blob { uint32_t revision, found, status, command; uint32_t cfg[64]; uint64_t bar2Phys; uint32_t bar2Status, bar2Mode, enabledTemporarily, pad; uint32_t bar0Regs[64]; uint32_t bar2Regs[128]; } blob {};
+		blob.revision = 3;
 		find();
 		bool restore = false;
 		uint16_t origCmd = 0;
@@ -79,6 +80,15 @@ namespace WEXXmm {
 				if (!mem || !base) {
 					blob.status = 3;
 				} else {
+					if (!bar0) {
+						const uint32_t l0 = blob.cfg[4];
+						uint64_t b0 = l0 & ~0xFULL;
+						if (((l0 >> 1) & 3) == 2) b0 |= static_cast<uint64_t>(blob.cfg[5]) << 32;
+						if (b0)
+							if (auto *md0 = IOMemoryDescriptor::withPhysicalAddress(b0, 0x1000, kIODirectionNone))
+								if (auto *map0 = md0->map(kIOMapInhibitCache))
+									bar0 = reinterpret_cast<volatile uint32_t *>(map0->getVirtualAddress());
+					}
 					if (!bar2) {
 						if (auto *md = IOMemoryDescriptor::withPhysicalAddress(base, 0x1000, kIODirectionNone)) {
 							if (auto *map = md->map(kIOMapInhibitCache))
@@ -90,6 +100,8 @@ namespace WEXXmm {
 					} else {
 						blob.bar2Status = bar2[0];
 						blob.bar2Mode = bar2[0x60 / 4];
+						for (unsigned i = 0; i < 128; ++i) blob.bar2Regs[i] = bar2[i];
+						if (bar0) for (unsigned i = 0; i < 64; ++i) blob.bar0Regs[i] = bar0[i];
 					}
 				}
 			}

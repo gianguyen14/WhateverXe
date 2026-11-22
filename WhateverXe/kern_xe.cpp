@@ -58,6 +58,7 @@
 #include "kern_tgl_noposh.hpp"
 #include "kern_rapl_probe.hpp"
 #include "kern_xmm_probe.hpp"
+#include "kern_xmm_psi.hpp"
 #include "kern_display13_dbuf.hpp"
 #include "kern_display13_wm.hpp"
 #include "kern_tgl_training_scope.hpp"
@@ -12223,6 +12224,19 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 				}
 				WEXXmm::enableMem=checkKernelArgument("-wexxmmenable");
 				SYSLOG("igfx","XMM modem probe active (-wexxmmprobe%s)",WEXXmm::enableMem?" -wexxmmenable":"");
+				WEXXmm::psiArmed=checkKernelArgument("-wexxmmpsi");
+				if(WEXXmm::psiArmed) {
+					if(auto live=OSSerializer::forTarget(nullptr,WEXXmm::serializePsi)) {
+						(tglLiveGPU ? tglLiveGPU : wexDiagRoot())->setProperty("WEXXmmPsi",live);live->release();
+					}
+					if(auto live=OSSerializer::forTarget(nullptr,WEXXmm::serializePsiGo)) {
+						(tglLiveGPU ? tglLiveGPU : wexDiagRoot())->setProperty("WEXXmmPsiGo",live);live->release();
+					}
+					if(auto live=OSSerializer::forTarget(nullptr,WEXXmm::serializeRst)) {
+						(tglLiveGPU ? tglLiveGPU : wexDiagRoot())->setProperty("WEXXmmReset",live);live->release();
+					}
+					SYSLOG("igfx","XMM PSI download armed (-wexxmmpsi): WEXXmmPsi dry run, WEXXmmPsiGo real run, WEXXmmReset");
+				}
 			}
 			// Linux Gen12 Wa_18022495364: an INDIRECT_CTX cache invalidation,
 			// distinct from ring PIPE_CONTROL. Keep the per-context batch intact.

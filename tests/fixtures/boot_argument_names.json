@@ -170,5 +170,6 @@
   "-wexecdptf": [],
   "-wexecdptf0": [],
   "-wexxmmprobe": [],
-  "-wexxmmenable": []
+  "-wexxmmenable": [],
+  "-wexxmmpsi": []
 }
