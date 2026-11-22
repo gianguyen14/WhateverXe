@@ -168,5 +168,7 @@
   "-wexnoccs": [],
   "-wexraplprobe": [],
   "-wexecdptf": [],
-  "-wexecdptf0": []
+  "-wexecdptf0": [],
+  "-wexxmmprobe": [],
+  "-wexxmmenable": []
 }

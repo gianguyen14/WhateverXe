@@ -57,6 +57,7 @@
 #include "kern_tgl_context_teardown.hpp"
 #include "kern_tgl_noposh.hpp"
 #include "kern_rapl_probe.hpp"
+#include "kern_xmm_probe.hpp"
 #include "kern_display13_dbuf.hpp"
 #include "kern_display13_wm.hpp"
 #include "kern_tgl_training_scope.hpp"
@@ -12214,6 +12215,14 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 				// Experiment only: set the EC's DPTF mode register once (see kern_rapl_probe.hpp).
 				if(checkKernelArgument("-wexecdptf")) WEXRapl::ecSetDptf(1);
 				else if(checkKernelArgument("-wexecdptf0")) WEXRapl::ecSetDptf(0);
+			}
+			// -wexxmmprobe: read-only state of the XMM 7360 modem (kern_xmm_probe.hpp).
+			if(checkKernelArgument("-wexxmmprobe")) {
+				if(auto live=OSSerializer::forTarget(nullptr,WEXXmm::serialize)) {
+					(tglLiveGPU ? tglLiveGPU : wexDiagRoot())->setProperty("WEXXmmProbe",live);live->release();
+				}
+				WEXXmm::enableMem=checkKernelArgument("-wexxmmenable");
+				SYSLOG("igfx","XMM modem probe active (-wexxmmprobe%s)",WEXXmm::enableMem?" -wexxmmenable":"");
 			}
 			// Linux Gen12 Wa_18022495364: an INDIRECT_CTX cache invalidation,
 			// distinct from ring PIPE_CONTROL. Keep the per-context batch intact.
