@@ -14588,6 +14588,37 @@ uint32_t XE::wrapTGLLaneMask(void *port) {
 	return FunctionCast(wrapTGLLaneMask, callbackXE->orgTGLLaneMask)(port);
 }
 
+// IOAcceleratorFamily2 (487.4.4, macOS 26.7.x; the same field exists in 485.2 on Sequoia): IOAccelFenceMachine::init
+// stores a fixed 100 ms quantum at fm+0x84 (`movl $0x64, 0x84(%rbx)`). Every command-buffer completion and every
+// MTLSharedEvent wait that is not kicked immediately by IOGraphicsAccelerator2::signalStampsUpdated is processed in
+// steps of that quantum (b00t0x/WhateverXe#130: Chrome Graphite canvas 13.8 Hz, dropped video frames, 90-150 ms stalls).
+// Opt-in -wexfencepoll lowers the quantum to 2 ms after the accelerator has started. Nothing is written unless the
+// flag is present and the fence machine layout is confirmed:
+//   fm = *(accel + 0x390), fm + 0x10 == accel, fm + 0x84 == 100.
+// Based on the patch posted in #130 (gupaixao); the 2 ms value is the one tested there and on Tiger Lake-U (9A49,
+// Sequoia, 6752 completions, none slower than 50 ms). The result is published on the accelerator node, not on the
+// registry root, so it is visible with `ioreg -l | grep TGLFencePollMs`.
+static void tglFencePollApply(IOService *accel) {
+	constexpr uint32_t quantumMs = 2;
+	if (!accel || !checkKernelArgument("-wexfencepoll")) return;
+	auto isKernelPointer = [](uintptr_t p) { return (p >> 47) == 0x1ffff && p <= UINTPTR_MAX - 0x1000; };
+	auto base = reinterpret_cast<uint8_t *>(accel);
+	auto fm = *reinterpret_cast<uint8_t * volatile *>(base + 0x390);
+	if (!isKernelPointer(reinterpret_cast<uintptr_t>(fm))) {
+		SYSLOG("igfx", "TGL fence poll: no fence machine yet, not applied");
+		return;
+	}
+	auto owner = *reinterpret_cast<uint8_t * volatile *>(fm + 0x10);
+	auto quantum = reinterpret_cast<volatile uint32_t *>(fm + 0x84);
+	if (owner != base || *quantum != 100) {
+		SYSLOG("igfx", "TGL fence poll: unexpected layout (owner match %d, quantum %u), not applied", owner == base, *quantum);
+		return;
+	}
+	*quantum = quantumMs;
+	SYSLOG("igfx", "TGL fence poll: IOAccelFenceMachine quantum 100 -> %u ms", quantumMs);
+	accel->setProperty("TGLFencePollMs", static_cast<uint64_t>(quantumMs), 32);
+}
+
 bool XE::wrapTGLAcceleratorStart(IOService *that, IOService *provider) {
  if((callbackXE->tglGT2Detected && !callbackXE->tglGT2Ready) ||
     (callbackXE->display12SmallGTDetected && !callbackXE->display12SmallGTReady) ||
@@ -14730,6 +14761,7 @@ bool XE::wrapTGLAcceleratorStart(IOService *that, IOService *provider) {
 	tglRecordStartOrder(6,that,9,0,0,result);
 	SYSLOG("igfx", "TGL accelerator start returned %d", result);
 	if(result && callbackXE->adlnDetected && checkKernelArgument("-wex-adln-kernel-ctx"))adlnRunKernelContextTrial(that);
+	if(result)tglFencePollApply(that);
 	return result;
 }
 
